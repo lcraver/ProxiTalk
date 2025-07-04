@@ -4,14 +4,13 @@ import hashlib
 import subprocess
 import threading
 import math
-from PIL import Image, ImageDraw, ImageFont
 import queue
 import select
 import atexit
 import bisect
 import re
 import platform
-
+from PIL import Image, ImageDraw, ImageFont
 
 # --- Constants --- #
 
@@ -22,10 +21,6 @@ if IS_WINDOWS:
 else:
     from config.paths import PIPER_BIN, MODEL_PATH, CACHE_DIR, APPS_DIR, ICON_DIR, FONT_PATH, AUTOCOMPLETE_PATH
     
-# --- State --- #
-
-
-
 # -- Emulator Setup --- #
 
 def is_admin():
@@ -161,9 +156,22 @@ def load_apps():
             apps.append({
                 "name": folder,
                 "metadata": load_metadata(folder),
-                "path": main_path
+                "icon_normal": load_icon(folder),
+                "icon_selected": load_icon(folder, "selected"),
+                "path": main_path,
             })
     return apps
+
+def load_icon(app_name, state=None):
+    if state:
+        icon_path = os.path.join(APPS_DIR, app_name, f"icon_{state}.png")
+    else:
+        icon_path = os.path.join(APPS_DIR, app_name, "icon.png")
+        
+    if os.path.isfile(icon_path):
+        return Image.open(icon_path).convert("1")
+    
+    return None
 
 def load_metadata(app_name):
     metadata_path = os.path.join(APPS_DIR, app_name, "metadata.json")
@@ -210,47 +218,21 @@ print(f"Found apps: {apps}")
 icons = {}
 
 def load_icon(name, state=None):
+    pathbase = ICON_DIR + "\\" + name;
+    
     if state:
-        img = Image.open(ICON_DIR + "/" + name + "_" + state + ".png").convert("1")
+        img = Image.open(pathbase + "_" + state + ".png").convert("1")
     else:
-        img = Image.open(ICON_DIR + "/" + name + ".png").convert("1")
+        img = Image.open(pathbase + ".png").convert("1")
     size = img.size
 
-    bitmap = [
-        [0 if img.getpixel((x, y)) == 0 else 1 for x in range(size[0])]
-        for y in range(size[1])
-    ]
+    print(f"[Icons] Loaded icon '{pathbase}' with size {size}", flush=True)
 
-    icons[name] = bitmap
+    return img
 
-def create_generating_icon():
-    icon = Image.new("1", (8, 8))
-    d = ImageDraw.Draw(icon)
-    d.line((4, 0, 4, 7), fill=255)
-    d.line((0, 4, 7, 4), fill=255)
-    d.line((1, 1, 6, 6), fill=255)
-    d.line((1, 6, 6, 1), fill=255)
-    return icon
-
-def create_speaking_icon():
-    icon = Image.new("1", (8, 8))
-    d = ImageDraw.Draw(icon)
-    d.polygon([(0,3), (0,4), (2,6), (2,1)], fill=255)  # speaker
-    d.line((3, 2, 3, 5), fill=255)
-    d.line((4, 1, 4, 6), fill=255)
-    d.line((5, 0, 5, 7), fill=255)
-    return icon
-
-def create_searching_icon():
-    icon = Image.new("1", (8, 8))
-    d = ImageDraw.Draw(icon)
-    d.ellipse((1, 1, 6, 6), outline=255, fill=0)
-    d.rectangle((5, 5, 7, 7), fill=255)  # simulates a "magnifying glass"
-    return icon
-
-searching_icon = create_searching_icon()
-generating_icon = create_generating_icon()
-speaking_icon = create_speaking_icon()
+searching_icon = load_icon("info")
+generating_icon = load_icon("settings")
+speaking_icon = load_icon("notes")
 
 # --- Piper TTS --- #
 
@@ -413,27 +395,30 @@ else:
 
 # --- Display Setup --- #
 
-brightness_level = 128
-inverted = False
-
-def set_display_brightness(level):
-    level = max(0, min(255, level))
-    disp.contrast(level)
-
-def set_display_inverted(inverted):
-    disp.invert(inverted)
+draw_lock = threading.RLock()
+display_queue = queue.Queue()
 
 width = disp.width
 height = disp.height
-image = Image.new("1", (width, height))
-draw = ImageDraw.Draw(image)
 
+# Create layered images
+base_layer = Image.new("1", (width, height))        # Static screen content
+base_layer_2 = Image.new("1", (width, height))      # Alternative static content (e.g., clock)
+overlay_layer = Image.new("1", (width, height))     # Temporary overlays (icons, cursors)
+composite_layer = Image.new("1", (width, height))   # Final image sent to display
+
+# Drawing contexts for each layer
+base_draw = ImageDraw.Draw(base_layer)
+base_draw_2 = ImageDraw.Draw(base_layer_2)
+overlay_draw = ImageDraw.Draw(overlay_layer)
+composite_draw = ImageDraw.Draw(composite_layer)
+
+# Font setup
 titleLineHeight = 12
 titleFontSize = 12
 titlePadding = 2
 bodyLineHeight = 12
 bodyFontSize = 12
-
 padding = -2
 top = padding
 bottom = height - padding
@@ -442,16 +427,18 @@ x = 0
 titleFont = ImageFont.truetype(FONT_PATH, titleFontSize)
 font = ImageFont.truetype(FONT_PATH, bodyFontSize)
 
-draw_lock = threading.Lock()
+# --- Render composite display --- #
+def update_display():
+    with draw_lock:
+        composite_layer.paste(base_layer)
+        composite_layer.paste(base_layer_2, (0, 0), base_layer_2)
+        composite_layer.paste(overlay_layer, (0, 0), overlay_layer)
+        disp.image(composite_layer)
+        disp.show()
 
-# --- Display Functions --- #
+# --- Display Functions (modified to use layers) --- #
 
-display_queue = queue.Queue()
-
-# To keep track of last input position for cursor blinking
-lastDrawX = 0
-lastDrawY = 0
-
+# Wrap text to fit screen width
 def wrap_text_by_pixel_width(text, font, max_width):
     words = text.split(' ')
     lines = []
@@ -459,17 +446,17 @@ def wrap_text_by_pixel_width(text, font, max_width):
 
     for word in words:
         test_line = current_line + (" " if current_line else "") + word
-        width = draw.textlength(test_line, font=font)
+        width = base_draw.textlength(test_line, font=font)
         if width <= max_width:
             current_line = test_line
         else:
             if current_line:
                 lines.append(current_line)
-            if draw.textlength(word, font=font) > max_width:
+            if base_draw.textlength(word, font=font) > max_width:
                 partial_word = ""
                 for char in word:
                     test_partial = partial_word + char
-                    if draw.textlength(test_partial, font=font) <= max_width:
+                    if base_draw.textlength(test_partial, font=font) <= max_width:
                         partial_word = test_partial
                     else:
                         lines.append(partial_word)
@@ -484,85 +471,95 @@ def wrap_text_by_pixel_width(text, font, max_width):
 
     return lines
 
+# Last known cursor position
+lastDrawX = 0
+lastDrawY = 0
+
 def display_set_screen(title, text):
     global lastDrawX, lastDrawY
     with draw_lock:
-        draw.rectangle((0, 0, width, height), outline=0, fill=0)
+        base_draw.rectangle((0, 0, width, height), outline=0, fill=0)
         wrapped_lines = wrap_text_by_pixel_width(text, font, width-4)
-        title_width = math.ceil(draw.textlength(title, titleFont))
+        title_width = math.ceil(base_draw.textlength(title, titleFont))
         title_top = top + (titleLineHeight - titleFontSize) // 2
-        draw.text((x + width/2 - title_width/2, title_top), title, font=titleFont, fill=255)
+        base_draw.text((x + width/2 - title_width/2, title_top), title, font=titleFont, fill=255)
 
         startY = top + titleLineHeight + titlePadding
         max_lines = (height - startY) // bodyLineHeight
         for i in range(min(len(wrapped_lines), max_lines)):
-            draw.text((x, startY + i * bodyLineHeight), wrapped_lines[i], font=font, fill=255)
+            base_draw.text((x, startY + i * bodyLineHeight), wrapped_lines[i], font=font, fill=255)
             lastDrawY = startY + i * bodyLineHeight
-            lastDrawX = draw.textlength(wrapped_lines[i], font)
+            lastDrawX = base_draw.textlength(wrapped_lines[i], font)
+        update_display()
 
-        disp.image(image)
-        disp.show()
-
-def display_draw_icon(icon_img, x=0, y=height - 8):
+def display_draw_icon(layer, icon_img, x=0, y=height - 8):
     with draw_lock:
-        image.paste(icon_img, (x, y))
-        disp.image(image)
-        disp.show()
+        print(f"[Display] Drawing icon at ({x}, {y})", flush=True)
+        if icon_img.mode != "1":
+            icon_img = icon_img.convert("1")
+        layer.paste(icon_img, (x, y), icon_img)
+        update_display()
 
-def display_clear_icon_area(x=0, y=height - 8):
+def display_clear_area(layer, x=0, y=0, width=128, height=64):
     with draw_lock:
-        draw.rectangle((x, y, x + 8, y + 8), fill=0)
-        disp.image(image)
-        disp.show()
+        layer.rectangle((x, y, x + width, y + height), fill=0)
+        update_display()
 
 def display_draw_blinking_cursor(x, y, isOn):
     with draw_lock:
-        cursor_width = 2
-        cursor_height = bodyLineHeight
-        cursor_x = int(x) + 2
-        cursor_y = int(y)
         color = 255 if isOn else 0
-        draw.rectangle((cursor_x, cursor_y, cursor_x + cursor_width, cursor_y + cursor_height), fill=color)
-        disp.image(image)
-        disp.show()
+        base_draw_2.rectangle((int(x)+2, int(y), int(x)+4, int(y)+bodyLineHeight), fill=color)
+        update_display()
 
 # --- Display Thread --- #
 
 def display_thread_func():
+    print("[Display Thread] Started", flush=True)
     is_cursor_on = False
     last_cursor_update = 0
 
-    while True:
-        timeout = 0.1
-        try:
-            cmd = display_queue.get(timeout=timeout)
-        except queue.Empty:
-            cmd = None
+    try:
+        while True:
+            timeout = 0.1
 
-        if cmd:
-            # switch statement to handle commands
-            match cmd[0]:
-                case "set_screen":
-                    _, title, text = cmd
-                    display_set_screen(title, text)
-                case "draw_icon":
-                    _, icon_img = cmd
-                    display_draw_icon(icon_img)
-                case "clear_icon":
-                    display_clear_icon_area()
-                case "draw_cursor":
-                    _, x, y, isOn = cmd
-                    display_draw_blinking_cursor(x, y, isOn)
-                case "exit":
-                    break
+            try:
+                cmd = display_queue.get(timeout=timeout)
+            except queue.Empty:
+                cmd = None
 
-        # Blink cursor toggle
-        now = time.time()
-        if now - last_cursor_update > 0.5:
-            is_cursor_on = not is_cursor_on
-            # Use global lastDrawX, lastDrawY for cursor position
-            display_draw_blinking_cursor(lastDrawX, lastDrawY, is_cursor_on)
-            last_cursor_update = now
+            if cmd:
+                # print(f"[Display] Command received: {cmd}", flush=True)
+                match cmd[0]:
+                    case "set_screen":
+                        _, title, text = cmd
+                        display_set_screen(title, text)
+                    case "draw_base_image":
+                        _, img, x, y = cmd
+                        display_draw_icon(base_layer, img, x, y)
+                    case "draw_overlay_image":
+                        _, img, x, y = cmd
+                        display_draw_icon(overlay_layer, img, x, y)
+                    case "clear_base_area":
+                        _, x, y, width, height = cmd
+                        display_clear_area(base_draw, x, y, width, height)
+                    case "clear_overlay_area":
+                        _, x, y, width, height = cmd
+                        display_clear_area(overlay_draw, x, y, width, height)
+                    case "draw_cursor":
+                        _, x, y, isOn = cmd
+                        display_draw_blinking_cursor(x, y, isOn)
+                    case "exit":
+                        print("[Display Thread] Exiting on exit command", flush=True)
+                        break
+
+            now = time.time()
+            if now - last_cursor_update > 0.5:
+                is_cursor_on = not is_cursor_on
+                display_draw_blinking_cursor(lastDrawX, lastDrawY, is_cursor_on)
+                last_cursor_update = now
+
+    except Exception as e:
+        print(f"[Display Thread] Crashed with exception: {e}", flush=True)
 
 # --- TTS + Cache --- #
 
@@ -635,7 +632,7 @@ def run_tts(text):
             audio_data = f.read()
 
         display_queue.put(("set_screen", "Cached", text))
-        display_queue.put(("draw_icon", speaking_icon))
+        display_queue.put(("draw_icon", speaking_icon, 0, height - 8))
         play_thread = threading.Thread(target=play_audio_sync, args=(audio_data,))
         play_thread.start()
         play_thread.join()
@@ -644,7 +641,7 @@ def run_tts(text):
     else:
         print(f"Generating audio for: {text}", flush=True)
         display_queue.put(("set_screen", "Generating", text))
-        display_queue.put(("draw_icon", generating_icon))
+        display_queue.put(("draw_icon", generating_icon, 0, height - 8))
 
         try:
             mappedText = apply_word_map(text, word_map)
@@ -658,7 +655,7 @@ def run_tts(text):
                     f.write(raw_audio)
 
                 display_queue.put(("set_screen", "Talking", text))
-                display_queue.put(("draw_icon", speaking_icon))
+                display_queue.put(("draw_icon", speaking_icon, 0, height - 8))
                 play_thread = threading.Thread(target=play_audio_sync, args=(raw_audio,))
                 play_thread.start()
                 play_thread.join()
@@ -740,7 +737,7 @@ else:
     def wait_for_keyboard(max_retries=24, retry_delay=2.5):
         tries = 0
         display_queue.put(("set_screen", "Connecting", "Looking for keyboard..."))
-        display_queue.put(("draw_icon", searching_icon))
+        display_queue.put(("draw_icon", searching_icon, 0, height - 8))
 
         while tries < max_retries or max_retries == -1:
             dev = find_keyboard()
@@ -766,12 +763,10 @@ def load_autocomplete_words(filepath):
     return words
 
 def main():
-    global brightness_level
-    global inverted
-
-    set_display_brightness(brightness_level)
-    set_display_inverted(inverted)
-
+    # Start display thread
+    disp_thread = threading.Thread(target=display_thread_func, daemon=True)
+    disp_thread.start()
+    
     # Ensure required files and folders exist
     if not os.path.exists(CACHE_DIR):
         os.makedirs(CACHE_DIR, exist_ok=True)
@@ -789,11 +784,7 @@ def main():
         display_queue.put(("set_screen", "Error", f"Model not found at:\n{MODEL_PATH}"))
         time.sleep(5)
 
-    display_queue.put(("set_screen", "Starting", "Please wait..."))
-
-    # Start display thread
-    disp_thread = threading.Thread(target=display_thread_func, daemon=True)
-    disp_thread.start()
+    # display_queue.put(("set_screen", "Starting", "Please wait..."))
 
     currentline = ""
 
@@ -815,14 +806,17 @@ def main():
     
     context = {
         "emulator": IS_WINDOWS,
+        "display": disp,
         "display_queue": display_queue,
         "run_tts": run_tts,
         "pressed_keys": keys_pressed,
+        "load_icon": load_icon,
         "apps": {
             "all": apps,
             "load": load_app_instance,
             "loaded_apps": loaded_apps,
-        }
+        },
+        "FONT_PATH": FONT_PATH,
     }
     
     # Create and use the reusable AppManager
@@ -832,14 +826,14 @@ def main():
     # Load all overlays
     overlay_count = app_manager.load_overlays(apps)
     print(f"[Main] Loaded {overlay_count} overlay apps")
-    
+
     # Load and start the main launcher app
     if app_manager.load_app("launcher"):
         app_manager.start_app("launcher", update_rate_hz=20.0)
-        print("[Main] Launcher app started")
+        print("[Main] launcher app started")
     else:
         print("[Main] Failed to load launcher app")
-    
+
     # Update context to include app_manager for other apps to use
     context["app_manager"] = app_manager
 
@@ -851,8 +845,8 @@ def main():
                 time.sleep(5)
                 continue
 
-            display_queue.put(("set_screen", "Ready", "Waiting for input..."))
-
+            # display_queue.put(("set_screen", "Ready", "Waiting for input..."))
+            
             try:
                 for event in dev.read_loop():
                     if event.type == ecodes.EV_KEY:
@@ -883,36 +877,6 @@ def main():
                             keycode = shift_key_map.get(keycode, None)
                             
                         # print(f"Processed keycode: {keycode}", flush=True)
-
-                        # if keycode == 'KEY_BRIGHTNESSUP':
-                        #     brightness_level = min(brightness_level + 32, 255)
-                        #     set_display_brightness(brightness_level)
-                        #     display_queue.put(("set_screen", "Brightness", f"Up: {brightness_level}"))
-                        #     continue
-                        # elif keycode == 'KEY_BRIGHTNESSDOWN':
-                        #     brightness_level = max(brightness_level - 32, 0)
-                        #     set_display_brightness(brightness_level)
-                        #     display_queue.put(("set_screen", "Brightness", f"Down: {brightness_level}"))
-                        #     continue
-
-                        # elif keycode == 'KEY_HOMEPAGE':
-                        #     inverted = not inverted
-                        #     set_display_inverted(inverted)
-                        #     display_queue.put(("set_screen", "Inverted", f"{inverted}"))
-                        #     continue
-
-                        # elif keycode == 'KEY_VOLUMEUP':
-                        #     current_ui_volume = min(current_ui_volume + 1, UI_STEPS)
-                        #     actual_volume = ui_to_actual_volume(current_ui_volume)
-                        #     set_actual_volume(actual_volume)
-                        #     display_queue.put(("set_screen", "Volume", f"Up: {round(current_ui_volume / UI_STEPS * 100)}%"))
-                        #     continue
-                        # elif keycode == 'KEY_VOLUMEDOWN':
-                        #     current_ui_volume = max(current_ui_volume - 1, 0)
-                        #     actual_volume = ui_to_actual_volume(current_ui_volume)
-                        #     set_actual_volume(actual_volume)
-                        #     display_queue.put(("set_screen", "Volume", f"Down: {round(current_ui_volume / UI_STEPS * 100)}%"))
-                        #     continue
 
                         # auto complete
                         # elif keycode == 'KEY_TAB':
@@ -950,7 +914,7 @@ def main():
                 if e.errno == 19:  # No such device (disconnected)
                     print("Keyboard disconnected (Errno 19). Reconnecting...", flush=True)
                     display_queue.put(("set_screen", "Disconnected", "Keyboard lost. Reconnecting..."))
-                    display_queue.put(("draw_icon", searching_icon))
+                    display_queue.put(("draw_icon", searching_icon, 0, height - 8))
                     time.sleep(1)
                 else:
                     raise  # Only ignore known disconnection errors

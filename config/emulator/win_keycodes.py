@@ -72,4 +72,10 @@ WIN_TO_LINUX_KEYCODE = {
     'left alt': 'KEY_LEFTALT',
     'right alt': 'KEY_RIGHTALT',
     'alt': 'KEY_LEFTALT',
+    
+    # arrow keys
+    'up': 'KEY_UP',
+    'down': 'KEY_DOWN',
+    'left': 'KEY_LEFT',
+    'right': 'KEY_RIGHT',
 }

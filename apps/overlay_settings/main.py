@@ -1,5 +1,8 @@
 from interfaces import AppBase
 import subprocess
+import threading
+import time
+from PIL import Image, ImageDraw, ImageFont
 
 class App(AppBase):
     def __init__(self, context):
@@ -11,21 +14,20 @@ class App(AppBase):
         self.VOLUME_CONTROL = "Speaker"
         self.emulator = context.get("emulator", False)
         self.current_ui_volume = self.UI_STEPS - 5
+        self.brightness_level = 128  # track brightness locally
         
+        self.FONT_PATH = context["FONT_PATH"]
+        
+        self.clear_icon_thread = None
+        self.clear_icon_lock = threading.Lock()
+        self.clear_icon_stop_flag = threading.Event()
+        
+        self.volume_icon = context["load_icon"]("info")
+        self.brightness_icon = context["load_icon"]("info_selected")
+
         actual_volume = self.ui_to_actual_volume(self.current_ui_volume)
         self.set_actual_volume(actual_volume)
-
-    def ui_to_actual_volume(self, ui_level):
-        ratio = ui_level / self.UI_STEPS
-        actual = int(self.MIN_VOL + (self.MAX_VOL - self.MIN_VOL) * ratio)
-        return actual
-
-    def set_actual_volume(self, percent):
-        if self.emulator:
-            print(f"[Volume] Skipping set to {percent}% (Emulator)")
-        else:
-            subprocess.call(["amixer", "sset", self.VOLUME_CONTROL, f"{percent}%"])
-
+        
     def start(self):
         print("[Launcher] Started")
 
@@ -38,12 +40,115 @@ class App(AppBase):
                 self.current_ui_volume = min(self.current_ui_volume + 1, self.UI_STEPS)
                 actual_volume = self.ui_to_actual_volume(self.current_ui_volume)
                 self.set_actual_volume(actual_volume)
-                self.display_queue.put(("set_screen", "Volume", f"Up: {round(self.current_ui_volume / self.UI_STEPS * 100)}%"))
+                self.show_volume_feedback("V:")
             case "KEY_VOLUMEDOWN":
                 self.current_ui_volume = max(self.current_ui_volume - 1, 0)
                 actual_volume = self.ui_to_actual_volume(self.current_ui_volume)
                 self.set_actual_volume(actual_volume)
-                self.display_queue.put(("set_screen", "Volume", f"Down: {round(self.current_ui_volume / self.UI_STEPS * 100)}%"))
+                self.show_volume_feedback("V:")
+            case 'KEY_BRIGHTNESSUP':
+                self.brightness_level = min(self.brightness_level + 32, 255)
+                self.set_display_brightness(self.brightness_level)
+                self.show_brightness_feedback("B:")
+            case 'KEY_BRIGHTNESSDOWN':
+                self.brightness_level = max(self.brightness_level - 32, 0)
+                self.set_display_brightness(self.brightness_level)
+                self.show_brightness_feedback("B:")
+
+    def show_volume_feedback(self, message):
+        icon = self.generate_bar_icon(self.current_ui_volume / self.UI_STEPS * 100, label=message)
+        
+        pos_x = 1
+        pos_y = 64 - icon.height - 1  # Position at the bottom left, leaving space for the icon
+        
+        self.display_queue.put(("clear_overlay_area", pos_x, pos_y, icon.width, icon.height))
+        self.display_queue.put(("draw_overlay_image", icon, pos_x, pos_y))
+        self._start_clear_timer(pos_x, pos_y, icon.width, icon.height)
+
+    def generate_bar_icon(self, volume_percent, width=24, height=4, label=None):
+        volume_percent = max(0, min(100, volume_percent))
+
+        font = ImageFont.truetype(self.FONT_PATH, height+1) if label else None
+        label_width, label_height = font.getsize(label) if label else (0, 0)
+        label_width += 2 if label else 0  # Padding
+
+        total_width = label_width + width
+        img = Image.new("1", (total_width, height), 0)
+        draw = ImageDraw.Draw(img)
+        
+        bar_x0 = label_width
+        bar_x1 = label_width + width - 1
+        
+        draw.rectangle([0, 0, bar_x1, height-1], fill=0)
+
+        # Center text vertically
+        if label:
+            text_y = (height - label_height) // 2
+            draw.text((0, text_y), label, font=font, fill=1)
+
+
+        draw.rectangle([bar_x0, 0, bar_x1, height - 1], outline=1, fill=0)
+
+        fill_width = int((volume_percent / 100.0) * width)
+        if fill_width > 0:
+            draw.rectangle([bar_x0, 0, bar_x0 + fill_width - 1, height - 1], fill=1)
+
+        return img
+
+    def show_brightness_feedback(self, message):
+        icon = self.generate_bar_icon(self.brightness_level / 255 * 100, label=message)
+
+        pos_x = 1
+        pos_y = 64 - icon.height - 1  # Position at the bottom left, leaving space for the icon
+        
+        self.display_queue.put(("clear_overlay_area", pos_x, pos_y, icon.width, icon.height))
+        self.display_queue.put(("draw_overlay_image", icon, pos_x, pos_y))
+        self._start_clear_timer(pos_x, pos_y, icon.width, icon.height)
+        
+    def _start_clear_timer(self, x, y, width, height, delay=1.5):
+        with self.clear_icon_lock:
+            # Signal any running thread to stop
+            self.clear_icon_stop_flag.set()
+            if self.clear_icon_thread and self.clear_icon_thread.is_alive():
+                self.clear_icon_thread.join()
+
+            self.clear_icon_stop_flag = threading.Event()
+
+            def clear_later():
+                if not self.clear_icon_stop_flag.wait(delay):
+                    self.display_queue.put(("clear_overlay_area", x, y, width, height))
+
+            self.clear_icon_thread = threading.Thread(target=clear_later, daemon=True)
+            self.clear_icon_thread.start()
+
+    def _clear_icon_delayed(self, x, y, width, height, delay=1.5):
+        time.sleep(delay)
+        self.display_queue.put(("clear_overlay_area", x, y, width, height))
+
+    def get_volume_icon(self):
+        return self.volume_icon
+
+    def get_brightness_icon(self):
+        return self.brightness_icon
 
     def stop(self):
         print("[Launcher] Stopped")
+        
+    def ui_to_actual_volume(self, ui_level):
+        ratio = ui_level / self.UI_STEPS
+        actual = int(self.MIN_VOL + (self.MAX_VOL - self.MIN_VOL) * ratio)
+        return actual
+
+    def set_actual_volume(self, percent):
+        if self.emulator:
+            print(f"[Volume] Skipping set to {percent}% (Emulator)")
+        else:
+            subprocess.call(["amixer", "sset", self.VOLUME_CONTROL, f"{percent}%"])
+            
+    def set_display_brightness(self, level):
+        level = max(0, min(255, level))
+        # Using display contrast for brightness setting as per original code
+        self.context.get("display").contrast(level)
+
+    def set_display_inverted(self, inverted):
+        self.context.get("display").invert(inverted)

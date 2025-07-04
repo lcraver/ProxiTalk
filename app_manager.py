@@ -175,7 +175,7 @@ class AppManager:
     
     def distribute_event(self, event_name: str, *args, **kwargs) -> None:
         """Distribute an event to all loaded applications that have the event handler."""
-        for app_name, app_instance in self.loaded_apps.items():
+        for app_name, app_instance in list(self.loaded_apps.items()):
             if hasattr(app_instance, event_name):
                 try:
                     handler = getattr(app_instance, event_name)
