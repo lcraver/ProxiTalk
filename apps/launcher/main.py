@@ -81,12 +81,13 @@ class App(AppBase):
             self.drawAllApps()
         elif keycode == "KEY_ENTER":
             if self.app_count > 0:
-                # Launch the selected app
+                # Swap to the selected app
                 selected_app = self.get_selected_app()
                 if selected_app:
                     name = selected_app['name']
-                    if self.context["app_manager"].load_app(name):
-                        self.context["app_manager"].start_app(name, update_rate_hz=20.0)
+                    self.context["app_manager"].swap_app_async(
+                        "launcher", name, update_rate_hz=20.0, delay=0.1
+                    )
             else:
                 print("[Launcher] No apps to launch")
                 

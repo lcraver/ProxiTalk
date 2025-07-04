@@ -59,6 +59,9 @@ WIN_TO_LINUX_KEYCODE = {
 
     'volume up': 'KEY_VOLUMEUP',
     'volume down': 'KEY_VOLUMEDOWN',
+    
+    'esc': 'KEY_ESC',
+    'escape': 'KEY_ESC',
 
     # Modifiers
     'left shift': 'KEY_LEFTSHIFT',

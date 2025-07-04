@@ -21,6 +21,13 @@ class App(AppBase):
     def onkeyup(self, keycode):
         if keycode == "KEY_ENTER":
             self.context["run_tts"](f"The current time is {self.current_time}")
+        elif keycode == "KEY_ESC":
+            self.display_queue.put(("set_screen", "Launcher", "Switching to Launcher..."))
+            if "app_manager" in self.context:
+                app_manager = self.context["app_manager"]
+                app_manager.swap_app_async("clock", "launcher", update_rate_hz=20.0, delay=0.1)
+            else:
+                print("[Clock] No app_manager available in context")
 
     def stop(self):
         self.display_queue.put(("set_screen", "Clock", "App stopped"))

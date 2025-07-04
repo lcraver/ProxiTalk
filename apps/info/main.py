@@ -21,17 +21,10 @@ class App(AppBase):
         # Allow time for the message to be displayed
         time.sleep(2)
         
-        # Switch back to the launcher app
+        # Use the new swap_app_async method to switch apps safely
         if "app_manager" in self.context:
             app_manager = self.context["app_manager"]
-            # Stop the current Info app
-            app_manager.stop_app("info")
-            # Load and start the launcher app
-            if app_manager.load_app("launcher"):
-                app_manager.start_app("launcher", update_rate_hz=20.0)
-                print("[Info] Switched to Launcher app")
-            else:
-                print("[Info] Failed to load Launcher app")
+            app_manager.swap_app_async("info", "launcher", update_rate_hz=20.0, delay=0.1)
         else:
             print("[Info] No app_manager available in context")
 

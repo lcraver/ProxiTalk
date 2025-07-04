@@ -7,7 +7,6 @@ import math
 import queue
 import select
 import atexit
-import bisect
 import re
 import platform
 from PIL import Image, ImageDraw, ImageFont
@@ -554,7 +553,7 @@ def display_thread_func():
 
             now = time.time()
             if now - last_cursor_update > 0.5:
-                is_cursor_on = not is_cursor_on
+                # is_cursor_on = not is_cursor_on
                 display_draw_blinking_cursor(lastDrawX, lastDrawY, is_cursor_on)
                 last_cursor_update = now
 
@@ -750,18 +749,6 @@ else:
 
         return None
 
-def load_autocomplete_words(filepath):
-    words = []
-    try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            for line in f:
-                word = line.strip()
-                if word:
-                    words.append(word)
-    except Exception as e:
-        print(f"Failed to load autocomplete words from {filepath}: {e}", flush=True)
-    return words
-
 def main():
     # Start display thread
     disp_thread = threading.Thread(target=display_thread_func, daemon=True)
@@ -784,25 +771,12 @@ def main():
         display_queue.put(("set_screen", "Error", f"Model not found at:\n{MODEL_PATH}"))
         time.sleep(5)
 
-    # display_queue.put(("set_screen", "Starting", "Please wait..."))
+    display_queue.put(("set_screen", "Starting", "Please wait..."))
 
     currentline = ""
 
     shift_key = 'KEY_LEFTSHIFT'
     keys_pressed = set()
-
-    autocomplete_words = load_autocomplete_words(AUTOCOMPLETE_PATH)
-    autocomplete_words.sort()
-
-    def get_autocomplete_suggestion(current_text):
-        if not current_text or current_text.endswith(' '):
-            return ""
-        last_word = current_text.split(' ')[-1].lower()
-        i = bisect.bisect_left(autocomplete_words, last_word)
-        while i < len(autocomplete_words) and autocomplete_words[i].startswith(last_word):
-            candidate = autocomplete_words[i]
-            return candidate[len(last_word):]
-        return ""
     
     context = {
         "emulator": IS_WINDOWS,
@@ -816,7 +790,11 @@ def main():
             "load": load_app_instance,
             "loaded_apps": loaded_apps,
         },
+        "hash_text": hash_text,
         "FONT_PATH": FONT_PATH,
+        "CACHE_DIR": CACHE_DIR,
+        "APPS_DIR": APPS_DIR,
+        "AUTOCOMPLETE_PATH": AUTOCOMPLETE_PATH,
     }
     
     # Create and use the reusable AppManager
@@ -845,7 +823,7 @@ def main():
                 time.sleep(5)
                 continue
 
-            # display_queue.put(("set_screen", "Ready", "Waiting for input..."))
+            display_queue.put(("set_screen", "Ready", "Waiting for input..."))
             
             try:
                 for event in dev.read_loop():
@@ -876,40 +854,6 @@ def main():
                         if shift_key in keys_pressed:
                             keycode = shift_key_map.get(keycode, None)
                             
-                        # print(f"Processed keycode: {keycode}", flush=True)
-
-                        # auto complete
-                        # elif keycode == 'KEY_TAB':
-                        #     suggestion = get_autocomplete_suggestion(currentline)
-                        #     if suggestion:
-                        #         currentline += suggestion
-                        #     display_queue.put(("set_screen", "Input", currentline))
-                        #     continue
-
-                        # char = key_map.get(keycode, None)
-                        # if char is None:
-                        #     continue
-
-                        # if keycode == 'KEY_ENTER':
-                        #     old_line = currentline
-                        #     run_tts(currentline)
-                        #     cached_path = os.path.join(CACHE_DIR, hash_text(old_line) + ".raw")
-                        #     if os.path.exists(cached_path):
-                        #         currentline = ""
-                        #         display_queue.put(("set_screen", "Ready", "Waiting for input..."))
-                        #     else:
-                        #         display_queue.put(("set_screen", "Input", old_line))
-                        # elif keycode == 'KEY_BACKSPACE':
-                        #     currentline = currentline[:-1]
-                        #     display_queue.put(("set_screen", "Input", currentline))
-                        # else:
-                        #     print(f"Adding char: {char}", flush=True)
-                        #     currentline += char
-                        #     suggestion = get_autocomplete_suggestion(currentline)
-                        #     if not suggestion:
-                        #         display_queue.put(("set_screen", "Input", currentline))
-                        #     else:
-                        #         display_queue.put(("set_screen", "Input", currentline + "|" + suggestion))
             except OSError as e:
                 if e.errno == 19:  # No such device (disconnected)
                     print("Keyboard disconnected (Errno 19). Reconnecting...", flush=True)

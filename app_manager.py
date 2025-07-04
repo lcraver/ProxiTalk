@@ -214,3 +214,60 @@ class AppManager:
             return self.start_app(app_name, update_rate_hz)
         
         return True
+    
+    def swap_app(self, from_app: str, to_app: str, update_rate_hz: float = 20.0) -> bool:
+        """
+        Safely swap from one app to another.
+        Stops and unloads the 'from_app', and starts the 'to_app'.
+        
+        Args:
+            from_app: Name of the app to stop and unload
+            to_app: Name of the app to start
+            update_rate_hz: Update rate for the new app
+            
+        Returns:
+            bool: True if swap was successful, False otherwise
+        """
+        print(f"[AppManager] Swapping from '{from_app}' to '{to_app}'")
+
+        # Ensure the target app is loaded first
+        if not self.load_app(to_app):
+            print(f"[AppManager] Failed to load target app: {to_app}")
+            return False
+
+        # Stop and unload the source app
+        if self.is_app_running(from_app):
+            if not self.stop_app(from_app):
+                print(f"[AppManager] Failed to stop source app: {from_app}")
+                return False
+
+        if from_app in self.loaded_apps:
+            del self.loaded_apps[from_app]
+            print(f"[AppManager] Unloaded app: {from_app}")
+
+        # Start the target app
+        if self.start_app(to_app, update_rate_hz):
+            print(f"[AppManager] Successfully swapped from '{from_app}' to '{to_app}'")
+            return True
+        else:
+            print(f"[AppManager] Failed to start target app: {to_app}")
+            return False
+
+    def swap_app_async(self, from_app: str, to_app: str, update_rate_hz: float = 20.0, delay: float = 0.1) -> None:
+        """
+        Asynchronously swap from one app to another.
+        This is useful when called from within an app's own thread to avoid deadlocks.
+        
+        Args:
+            from_app: Name of the app to stop
+            to_app: Name of the app to start
+            update_rate_hz: Update rate for the new app
+            delay: Delay before performing the swap (to allow current operations to complete)
+        """
+        def delayed_swap():
+            time.sleep(delay)
+            self.swap_app(from_app, to_app, update_rate_hz)
+        
+        swap_thread = threading.Thread(target=delayed_swap, daemon=True, name=f"Swap-{from_app}-to-{to_app}")
+        swap_thread.start()
+        print(f"[AppManager] Scheduled async swap from '{from_app}' to '{to_app}'")
