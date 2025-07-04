@@ -1,0 +1,8 @@
+{
+  "name": "Settings",
+  "version": "1.0",
+  "type": "overlay",
+  
+  "description": "This is the overlay for the Settings app, which provides a user interface for configuring system settings.",
+  "author": "Pidge"
+}

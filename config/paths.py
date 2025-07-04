@@ -1,0 +1,7 @@
+PIPER_BIN = "/home/dietpi/piper/piper"
+MODEL_PATH = "/home/dietpi/piper/en_GB-cori-medium.onnx"
+CACHE_DIR = "/home/dietpi/piper_cache"
+APPS_DIR = "/home/dietpi/apps"
+ICON_DIR = "/home/dietpi/icons"
+FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+AUTOCOMPLETE_PATH = "/home/dietpi/autocomplete_words.txt"
