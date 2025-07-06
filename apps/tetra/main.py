@@ -77,6 +77,9 @@ class App(AppBase):
         self.drop_interval = 20  # Drop every 20 ticks initially
         self.fast_drop_active = False  # Track if fast drop is active
         
+        # Performance optimization
+        self.needs_redraw = True  # Flag to control when to redraw
+        
     def reset_game(self):
         """Reset the game to initial state"""
         # Initialize empty grid
@@ -89,6 +92,7 @@ class App(AppBase):
         self.state = self.PLAYING
         self.drop_timer = 0
         self.fast_drop_active = False  # Reset fast drop state
+        self.needs_redraw = True  # Force redraw after reset
         
         # Current piece
         self.current_piece = self.spawn_piece()
@@ -182,7 +186,7 @@ class App(AppBase):
         
     def start(self):
         """Called when the app starts"""
-        self.draw_game()
+        self.needs_redraw = True
         
     def update(self):
         if self.state == self.PLAYING:
@@ -190,45 +194,50 @@ class App(AppBase):
             if self.drop_timer >= self.drop_interval:
                 self.drop_timer = 0
                 self.drop_piece()
-                if self.state == self.PLAYING:  # Only draw if still playing
-                    self.draw_game()
+                
+        # Only redraw when necessary
+        if self.needs_redraw and self.state == self.PLAYING:
+            self.draw_game()
+            self.needs_redraw = False
 
     def drop_piece(self):
         """Drop the current piece one row"""
         if self.is_valid_position(self.current_piece, dy=1):
             self.current_piece['y'] += 1
+            self.needs_redraw = True
         else:
             # Piece landed
-            self.play_sfx(self.path + "drop.wav")
             self.place_piece(self.current_piece)
             
             # Clear lines
             lines_cleared = self.clear_lines()
             if lines_cleared > 0:
                 if lines_cleared == 4:
-                    # Tetris! Play special sound
-                    self.play_sfx(self.path + "tetris.wav")
-                    self.run_tts("Tetris!", background=True)
+                    self.play_sfx(self.path + "tetra.wav")
+                    self.run_tts("Oh baby a Tetra!", background=True)
                 else:
                     self.play_sfx(self.path + "line_clear.wav")
+            else:
+                # Only play drop sound if no lines were cleared
+                self.play_sfx(self.path + "drop.wav")
             
             # Spawn next piece
             self.current_piece = self.next_piece
             self.next_piece = self.spawn_piece()
+            self.needs_redraw = True
             
             # Check game over
             if not self.is_valid_position(self.current_piece):
                 self.game_over()
                 
     def game_over(self):
-        """Handle game over"""
         self.state = self.GAME_OVER
         self.play_sfx(self.path + "game_over.wav")
         self.run_tts(f"Game over! Final score: {self.score}", background=True)
         self.draw_game_over()
         
+    # this should definitely only draw the game itself and not the UI since that update less...
     def draw_game(self):
-        """Draw the current game state"""
         img = Image.new("1", (128, 64), 0)
         draw = ImageDraw.Draw(img)
         
@@ -239,30 +248,35 @@ class App(AppBase):
         border_y2 = self.GRID_OFFSET_Y + self.GRID_HEIGHT * self.CELL_SIZE
         draw.rectangle([border_x1, border_y1, border_x2, border_y2], outline=1, fill=0)
         
-        # Draw placed pieces
+        # Collect all filled cells for batch drawing
+        filled_cells = []
+        
+        # Add placed pieces
         for y in range(self.GRID_HEIGHT):
             for x in range(self.GRID_WIDTH):
                 if self.grid[y][x]:
-                    pixel_x = self.GRID_OFFSET_X + x * self.CELL_SIZE
-                    pixel_y = self.GRID_OFFSET_Y + y * self.CELL_SIZE
-                    draw.rectangle([pixel_x, pixel_y, 
-                                  pixel_x + self.CELL_SIZE - 1, 
-                                  pixel_y + self.CELL_SIZE - 1], fill=1)
+                    filled_cells.append((x, y))
         
-        # Draw current piece
+        # Add current piece
         if self.current_piece:
             for y in range(4):
                 for x in range(4):
                     if self.current_piece['shape'][y][x]:
-                        pixel_x = self.GRID_OFFSET_X + (self.current_piece['x'] + x) * self.CELL_SIZE
-                        pixel_y = self.GRID_OFFSET_Y + (self.current_piece['y'] + y) * self.CELL_SIZE
+                        grid_x = self.current_piece['x'] + x
+                        grid_y = self.current_piece['y'] + y
                         
-                        # Only draw if within visible area
-                        if (pixel_y >= self.GRID_OFFSET_Y and 
-                            pixel_y < self.GRID_OFFSET_Y + self.GRID_HEIGHT * self.CELL_SIZE):
-                            draw.rectangle([pixel_x, pixel_y, 
-                                          pixel_x + self.CELL_SIZE - 1, 
-                                          pixel_y + self.CELL_SIZE - 1], fill=1)
+                        # Only add if within visible area
+                        if (0 <= grid_x < self.GRID_WIDTH and 
+                            grid_y >= 0 and grid_y < self.GRID_HEIGHT):
+                            filled_cells.append((grid_x, grid_y))
+        
+        # Draw all filled cells in one go
+        for x, y in filled_cells:
+            pixel_x = self.GRID_OFFSET_X + x * self.CELL_SIZE
+            pixel_y = self.GRID_OFFSET_Y + y * self.CELL_SIZE
+            draw.rectangle([pixel_x, pixel_y, 
+                          pixel_x + self.CELL_SIZE - 1, 
+                          pixel_y + self.CELL_SIZE - 1], fill=1)
         
         # Draw score and level (right side)
         font = self.context["fonts"]["small"]
@@ -284,9 +298,10 @@ class App(AppBase):
         draw.text((score_x, 46), lines_value, font=font, fill=1)
         
         # Draw next piece preview (left side)
-        next_x = 2
         next_y = 5
         next_text = "Next:"
+        width = draw.textlength(next_text, font=font)
+        next_x = border_x1 - width - 1
         draw.text((next_x, next_y), next_text, font=font, fill=1)
         
         # Draw next piece
@@ -303,7 +318,6 @@ class App(AppBase):
         self.display_queue.put(("draw_base_image", img, 0, 0))
         
     def draw_game_over(self):
-        """Draw game over screen"""
         img = Image.new("1", (128, 64), 0)
         draw = ImageDraw.Draw(img)
         
@@ -339,20 +353,29 @@ class App(AppBase):
         self.display_queue.put(("clear_base",))
         self.display_queue.put(("draw_base_image", img, 0, 0))
         
-    def onkeydown(self, keycode):
-        """Handle key press events"""
+    def onkeyup(self, keycode):
         if self.state == self.PLAYING:
             # Movement controls
             if keycode == "KEY_LEFT" or keycode == "KEY_A":
                 if self.is_valid_position(self.current_piece, dx=-1):
                     self.current_piece['x'] -= 1
-                    self.play_sfx(self.path + "move.wav")
-                    self.draw_game()
+                    self.needs_redraw = True
+                    # Reduce move sound frequency to avoid audio lag
+                    if hasattr(self, '_last_move_sound') and time.time() - self._last_move_sound < 0.1:
+                        pass  # Skip sound if too recent
+                    else:
+                        self.play_sfx(self.path + "move.wav")
+                        self._last_move_sound = time.time()
             elif keycode == "KEY_RIGHT" or keycode == "KEY_D":
                 if self.is_valid_position(self.current_piece, dx=1):
                     self.current_piece['x'] += 1
-                    self.play_sfx(self.path + "move.wav")
-                    self.draw_game()
+                    self.needs_redraw = True
+                    # Reduce move sound frequency to avoid audio lag
+                    if hasattr(self, '_last_move_sound') and time.time() - self._last_move_sound < 0.1:
+                        pass  # Skip sound if too recent
+                    else:
+                        self.play_sfx(self.path + "move.wav")
+                        self._last_move_sound = time.time()
             elif keycode == "KEY_DOWN" or keycode == "KEY_S":
                 # Soft drop
                 self.drop_piece()
@@ -361,8 +384,8 @@ class App(AppBase):
                 rotated_shape = self.rotate_piece(self.current_piece)
                 if self.is_valid_position(self.current_piece, shape=rotated_shape):
                     self.current_piece['shape'] = rotated_shape
+                    self.needs_redraw = True
                     self.play_sfx(self.path + "move.wav")
-                    self.draw_game()
             elif keycode == "KEY_SPACE":
                 # Hard drop
                 while self.is_valid_position(self.current_piece, dy=1):
@@ -375,22 +398,17 @@ class App(AppBase):
         elif self.state == self.PAUSED:
             if keycode == "KEY_P" or keycode == "KEY_SPACE":
                 self.state = self.PLAYING
+                self.needs_redraw = True
                 self.run_tts("Game resumed", background=True)
                 
         elif self.state == self.GAME_OVER:
             if keycode == "KEY_R":
                 self.reset_game()
-                self.draw_game()
                 
         # Global controls
         if keycode == "KEY_ESC":
             self.display_queue.put(("set_screen", "Launcher", "Returning to launcher..."))
-            self.context["app_manager"].swap_app_async("tetris", "launcher", update_rate_hz=20.0, delay=0.1)
+            self.context["app_manager"].swap_app_async("tetra", "launcher", update_rate_hz=20.0, delay=0.1)
             
-    def onkeyup(self, keycode):
-        """Handle key release events"""
-        pass
-        
     def stop(self):
-        """Called when the app stops"""
         pass

@@ -30,8 +30,8 @@ class App(AppBase):
         
     def reset_game(self):
         """Reset the game to initial state"""
-        # Snake starts in the middle, moving right
-        self.snake = [(self.GRID_WIDTH // 2, self.GRID_HEIGHT // 2)]
+        # hebi starts in the middle, moving right
+        self.hebi = [(self.GRID_WIDTH // 2, self.GRID_HEIGHT // 2)]
         self.direction = (1, 0)  # (dx, dy) - moving right
         self.next_direction = (1, 0)
         
@@ -47,7 +47,7 @@ class App(AppBase):
         while True:
             x = random.randint(0, self.GRID_WIDTH - 1)
             y = random.randint(0, self.GRID_HEIGHT - 1)
-            if (x, y) not in self.snake:
+            if (x, y) not in self.hebi:
                 self.food = (x, y)
                 break
                 
@@ -60,17 +60,17 @@ class App(AppBase):
             self.move_timer += 1
             if self.move_timer >= self.move_interval:
                 self.move_timer = 0
-                self.move_snake()
+                self.move_hebi()
                 if self.state == self.PLAYING:  # Only draw if still playing
                     self.draw_game()
 
-    def move_snake(self):
-        """Move the snake one step"""
+    def move_hebi(self):
+        """Move the hebi one step"""
         # Update direction
         self.direction = self.next_direction
         
         # Calculate new head position
-        head_x, head_y = self.snake[0]
+        head_x, head_y = self.hebi[0]
         new_x = head_x + self.direction[0]
         new_y = head_y + self.direction[1]
         
@@ -81,13 +81,13 @@ class App(AppBase):
             return
             
         # Check self collision
-        if (new_x, new_y) in self.snake:
+        if (new_x, new_y) in self.hebi:
             self.game_over()
             return
             
         # Add new head
         new_head = (new_x, new_y)
-        self.snake.insert(0, new_head)
+        self.hebi.insert(0, new_head)
         
         # Check if food eaten
         if new_head == self.food:
@@ -100,7 +100,7 @@ class App(AppBase):
                 self.move_interval = max(3, self.move_interval - 1)
         else:
             # Remove tail if no food eaten
-            self.snake.pop()
+            self.hebi.pop()
             
     def game_over(self):
         """Handle game over"""
@@ -114,8 +114,8 @@ class App(AppBase):
         img = Image.new("1", (128, 64), 0)
         draw = ImageDraw.Draw(img)
         
-        # Draw snake
-        for segment in self.snake:
+        # Draw hebi
+        for segment in self.hebi:
             x, y = segment
             pixel_x = x * self.CELL_SIZE
             pixel_y = y * self.CELL_SIZE
@@ -210,7 +210,7 @@ class App(AppBase):
         # Global controls
         if keycode == "KEY_ESC":
             self.display_queue.put(("set_screen", "Launcher", "Returning to launcher..."))
-            self.context["app_manager"].swap_app_async("snake", "launcher", update_rate_hz=20.0, delay=0.1)
+            self.context["app_manager"].swap_app_async("hebi", "launcher", update_rate_hz=20.0, delay=0.1)
             
     def onkeyup(self, keycode):
         """Handle key release events"""

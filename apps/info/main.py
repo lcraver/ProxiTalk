@@ -10,11 +10,11 @@ class App(AppBase):
 
     def start(self):
         print("[Info] Started")
-        self.display_queue.put(("set_screen", "Info", "App started"))
-        time.sleep(2)
         self.display_queue.put(("set_screen", "Info", "This is the Info app."))
         time.sleep(2)
-        self.display_queue.put(("set_screen", "Info", "It provides information about the system."))
+        self.display_queue.put(("set_screen", "Info", "ProxiTalk was created by Pidge!"))
+        time.sleep(2)
+        self.display_queue.put(("set_screen", "Info", "Thanks to lilian and the gardeners for inspiring it!"))
         time.sleep(2)
         # unload the Info app and switch to the Launcher app
         self.display_queue.put(("set_screen", "Info", "Switching to Launcher..."))
