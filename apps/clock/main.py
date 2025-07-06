@@ -7,28 +7,46 @@ class App(AppBase):
         self.display_queue = context["display_queue"]
         self.t = 0
         self.current_time = time.strftime("%H:%M:%S", time.localtime())
+        self.play_sfx = context["play_sfx"]
+        self.path = context["app_path"]
 
     def start(self):
-        print("[Clock] Started")
-        self.display_queue.put(("set_screen", "Clock", "App started"))
+        pass
 
     def update(self):
         self.t += 1
+        
+        # Update the current time every 20 ticks (ever 1 second if update rate is 20Hz)
         if self.t % 20 == 0:
+            self.display_queue.put(("clear_base",))
             self.current_time = time.strftime("%H:%M:%S", time.localtime())
-            self.display_queue.put(("set_screen", "Clock", f"Current time: {self.current_time}"))
+            # draw the clock in the middle of the screen
+            
+            # get font width and height
+            font = self.context["fonts"]["large_bold"]
+            font_width, font_height = font.getsize(self.current_time)
+
+            self.display_queue.put(("draw_base_text", font, self.current_time, 64-(font_width/2), 32-(font_height/2)))
+            self.play_sfx(self.path + "tick.wav")
+            # play chime every time the seconds reach 0 (every 60 seconds)
+            if self.current_time.endswith(":00"):
+                self.play_sfx(self.path + "chime.wav")
+        
             
     def onkeyup(self, keycode):
-        if keycode == "KEY_ENTER":
+        # reload the app if 'R' is pressed
+        if keycode == "KEY_R":
+            self.display_queue.put(("set_screen", "Clock", "Reloading Clock app..."))
+            self.context["app_manager"].reload_app("clock")
+        
+        # read the current time if 'Enter' is pressed
+        elif keycode == "KEY_ENTER":
             self.context["run_tts"](f"The current time is {self.current_time}")
+        
+        # switch to the launcher if 'Esc' is pressed
         elif keycode == "KEY_ESC":
             self.display_queue.put(("set_screen", "Launcher", "Switching to Launcher..."))
-            if "app_manager" in self.context:
-                app_manager = self.context["app_manager"]
-                app_manager.swap_app_async("clock", "launcher", update_rate_hz=20.0, delay=0.1)
-            else:
-                print("[Clock] No app_manager available in context")
+            self.context["app_manager"].swap_app_async("clock", "launcher", update_rate_hz=20.0, delay=0.1)
 
     def stop(self):
-        self.display_queue.put(("set_screen", "Clock", "App stopped"))
-        print("[Clock] Stopped")
+        pass

@@ -16,9 +16,11 @@ from PIL import Image, ImageDraw, ImageFont
 IS_WINDOWS = platform.system() == "Windows"
 
 if IS_WINDOWS:
-    from config.emulator.paths import PIPER_BIN, MODEL_PATH, CACHE_DIR, APPS_DIR, ICON_DIR, FONT_PATH, AUTOCOMPLETE_PATH
+    from config.emulator.paths import PIPER_BIN, MODEL_PATH, CACHE_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH
+    from config.emulator.paths import FONT_PATH, FONT_ITALIC_PATH, FONT_BOLD_PATH
 else:
-    from config.paths import PIPER_BIN, MODEL_PATH, CACHE_DIR, APPS_DIR, ICON_DIR, FONT_PATH, AUTOCOMPLETE_PATH
+    from config.paths import PIPER_BIN, MODEL_PATH, CACHE_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH, FONT_ITALIC_PATH
+    from config.paths import FONT_PATH, FONT_ITALIC_PATH, FONT_BOLD_PATH
     
 # -- Emulator Setup --- #
 
@@ -210,28 +212,46 @@ def load_app_instance(app_name, context):
     return None
 
 apps = load_apps()
-print(f"Found apps: {apps}")
 
 # --- Icons --- #
 
 icons = {}
 
 def load_icon(name, state=None):
-    pathbase = ICON_DIR + "\\" + name;
+    pathbase = ICON_DIR + "\\" + name
     
     if state:
         img = Image.open(pathbase + "_" + state + ".png").convert("1")
     else:
         img = Image.open(pathbase + ".png").convert("1")
-    size = img.size
-
-    print(f"[Icons] Loaded icon '{pathbase}' with size {size}", flush=True)
 
     return img
 
 searching_icon = load_icon("info")
 generating_icon = load_icon("settings")
 speaking_icon = load_icon("notes")
+
+# --- Audio Playback --- #
+
+def play_sfx_internal(path: str):
+    if not os.path.isfile(path):
+        print(f"[Audio] File not found: {path}", flush=True)
+        return
+
+    try:
+        if IS_WINDOWS:
+            sound = pygame.mixer.Sound(path)
+            channel = sound.play()
+            while channel.get_busy():
+                pygame.time.wait(10)
+        else:
+            subprocess.call(["aplay", path])
+    except Exception as e:
+        print(f"[Audio] Error playing wav file '{path}': {e}", flush=True)
+        
+def play_sfx(path: str):
+    threading.Thread(target=play_sfx_internal, args=(path,), daemon=True).start()
+
 
 # --- Piper TTS --- #
 
@@ -413,8 +433,6 @@ overlay_draw = ImageDraw.Draw(overlay_layer)
 composite_draw = ImageDraw.Draw(composite_layer)
 
 # Font setup
-titleLineHeight = 12
-titleFontSize = 12
 titlePadding = 2
 bodyLineHeight = 12
 bodyFontSize = 12
@@ -423,8 +441,22 @@ top = padding
 bottom = height - padding
 x = 0
 
-titleFont = ImageFont.truetype(FONT_PATH, titleFontSize)
+# check if font files exist
+if not os.path.isfile(FONT_PATH):
+    raise FileNotFoundError(f"Font file not found: {FONT_PATH}")
 font = ImageFont.truetype(FONT_PATH, bodyFontSize)
+if not os.path.isfile(FONT_BOLD_PATH):
+    raise FileNotFoundError(f"Bold font file not found: {FONT_BOLD_PATH}")
+fontBold = ImageFont.truetype(FONT_BOLD_PATH, bodyFontSize)
+
+fontLargeSize = 24
+
+if not os.path.isfile(FONT_PATH):
+    raise FileNotFoundError(f"Font file not found: {FONT_PATH}")
+fontLarge = ImageFont.truetype(FONT_PATH, fontLargeSize)
+if not os.path.isfile(FONT_BOLD_PATH):
+    raise FileNotFoundError(f"Bold font file not found: {FONT_BOLD_PATH}")
+fontLargeBold = ImageFont.truetype(FONT_BOLD_PATH, fontLargeSize)
 
 # --- Render composite display --- #
 def update_display():
@@ -479,11 +511,11 @@ def display_set_screen(title, text):
     with draw_lock:
         base_draw.rectangle((0, 0, width, height), outline=0, fill=0)
         wrapped_lines = wrap_text_by_pixel_width(text, font, width-4)
-        title_width = math.ceil(base_draw.textlength(title, titleFont))
-        title_top = top + (titleLineHeight - titleFontSize) // 2
-        base_draw.text((x + width/2 - title_width/2, title_top), title, font=titleFont, fill=255)
+        title_width = math.ceil(base_draw.textlength(title, fontBold))
+        title_top = top + (bodyLineHeight - bodyFontSize) // 2
+        base_draw.text((x + width/2 - title_width/2, title_top), title, font=fontBold, fill=255)
 
-        startY = top + titleLineHeight + titlePadding
+        startY = top + bodyLineHeight + titlePadding
         max_lines = (height - startY) // bodyLineHeight
         for i in range(min(len(wrapped_lines), max_lines)):
             base_draw.text((x, startY + i * bodyLineHeight), wrapped_lines[i], font=font, fill=255)
@@ -491,9 +523,13 @@ def display_set_screen(title, text):
             lastDrawX = base_draw.textlength(wrapped_lines[i], font)
         update_display()
 
+def display_draw_text(layer, font, text, x=0, y=0):
+    with draw_lock:
+        layer.text((x, y), text, font=font, fill=255)
+        update_display()
+
 def display_draw_icon(layer, icon_img, x=0, y=height - 8):
     with draw_lock:
-        print(f"[Display] Drawing icon at ({x}, {y})", flush=True)
         if icon_img.mode != "1":
             icon_img = icon_img.convert("1")
         layer.paste(icon_img, (x, y), icon_img)
@@ -532,12 +568,20 @@ def display_thread_func():
                     case "set_screen":
                         _, title, text = cmd
                         display_set_screen(title, text)
+                    case "draw_base_text":
+                        _, font, text, x, y = cmd
+                        display_draw_text(base_draw, font, text, x, y)
+                    case "draw_overlay_text":
+                        _, font, text, x, y = cmd
+                        display_draw_text(overlay_draw, font, text, x, y)
                     case "draw_base_image":
                         _, img, x, y = cmd
                         display_draw_icon(base_layer, img, x, y)
                     case "draw_overlay_image":
                         _, img, x, y = cmd
                         display_draw_icon(overlay_layer, img, x, y)
+                    case "clear_base":
+                        display_clear_area(base_draw, 0, 0, 128, 64)
                     case "clear_base_area":
                         _, x, y, width, height = cmd
                         display_clear_area(base_draw, x, y, width, height)
@@ -618,15 +662,12 @@ def play_audio_sync(audio_bytes):
             print(f"[Audio] aplay error: {e}", flush=True)
 
 def run_tts(text):
-    print(f"Running TTS for: {text}", flush=True)
-
     if not text.strip():
         return
     
     cached_file = os.path.join(CACHE_DIR, hash_text(text) + ".raw")
 
     if os.path.exists(cached_file):
-        print(f"Playing cached audio asynchronously for: {text}", flush=True)
         with open(cached_file, "rb") as f:
             audio_data = f.read()
 
@@ -638,7 +679,6 @@ def run_tts(text):
         display_queue.put(("clear_icon",))
 
     else:
-        print(f"Generating audio for: {text}", flush=True)
         display_queue.put(("set_screen", "Generating", text))
         display_queue.put(("draw_icon", generating_icon, 0, height - 8))
 
@@ -646,8 +686,6 @@ def run_tts(text):
             mappedText = apply_word_map(text, word_map)
             raw_audio = piper_instance.synthesize(mappedText)
             display_queue.put(("clear_icon",))
-
-            print(f"Generated audio length: {len(raw_audio)} bytes", flush=True)
 
             if raw_audio:
                 with open(cached_file, "wb") as f:
@@ -785,6 +823,13 @@ def main():
         "run_tts": run_tts,
         "pressed_keys": keys_pressed,
         "load_icon": load_icon,
+        "play_sfx": play_sfx,
+        "fonts": {
+            "default": font,
+            "bold": fontBold,
+            "large": fontLarge,
+            "large_bold": fontLargeBold,
+        },
         "apps": {
             "all": apps,
             "load": load_app_instance,
@@ -840,19 +885,17 @@ def main():
                             
                             keys_pressed.add(keycode)
                             
-                            # Distribute keydown event to all loaded apps
+                            if shift_key in keys_pressed:
+                                keycode = shift_key_map.get(keycode, None)
                             app_manager.distribute_event("onkeydown", keycode)
+                            
                         elif key_event.keystate == 0: # Key up
                             if keycode in keys_pressed:
                                 keys_pressed.remove(keycode)
-                                # Distribute keyup event to all loaded apps
+                                
+                                if shift_key in keys_pressed:
+                                    keycode = shift_key_map.get(keycode, None)
                                 app_manager.distribute_event("onkeyup", keycode)
-                            continue
-                        else:
-                            continue # ignore repeats
-
-                        if shift_key in keys_pressed:
-                            keycode = shift_key_map.get(keycode, None)
                             
             except OSError as e:
                 if e.errno == 19:  # No such device (disconnected)

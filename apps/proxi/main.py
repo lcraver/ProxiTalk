@@ -38,22 +38,15 @@ class App(AppBase):
 
     def start(self):
         print("[Proxi] Started")
-        self.display_queue.put(("set_screen", "Proxi", "App started"))
+        self.display_queue.put(("set_screen", "Ready", "Waiting for input..."))
 
     def update(self):
         pass
     
     def onkeyup(self, keycode):
-        print(f"[Proxi] Key up: {keycode}", flush=True)
-        
         if keycode == 'KEY_ESC':
             self.display_queue.put(("set_screen", "Launcher", "Switching to Launcher..."))
-            if "app_manager" in self.context:
-                app_manager = self.context["app_manager"]
-                app_manager.swap_app_async("proxi", "launcher", update_rate_hz=20.0, delay=0.1)
-            else:
-                print("[Proxi] No app_manager available in context")
-            return
+            self.context["app_manager"].swap_app_async("proxi", "launcher", update_rate_hz=20.0, delay=0.1)
         
         if keycode == 'KEY_TAB':
             suggestion = self.get_autocomplete_suggestion(self.currentline)
@@ -79,7 +72,6 @@ class App(AppBase):
             self.currentline = self.currentline[:-1]
             self.display_queue.put(("set_screen", "Input", self.currentline))
         else:
-            print(f"Adding char: {char}", flush=True)
             self.currentline += char
             suggestion = self.get_autocomplete_suggestion(self.currentline)
             if not suggestion:
@@ -88,5 +80,4 @@ class App(AppBase):
                 self.display_queue.put(("set_screen", "Input", self.currentline + "|" + suggestion))
     
     def stop(self):
-        self.display_queue.put(("set_screen", "Proxi", "App stopped"))
         print("[Proxi] Stopped")

@@ -12,7 +12,6 @@ class App(AppBase):
 
     def start(self):
         print("[Launcher] Started")
-        # self.display_queue.put(("set_screen", "Launcher", "App started"))
         
         x = 1
         self.selection = 0
@@ -58,14 +57,12 @@ class App(AppBase):
             self.draw_app(index, app, x, y)
 
     def draw_app(self, index, app, x, y):
-        print(f"[Launcher] App: -{app['name']}- at index {index} with x={x}, y={y}")
         if index == self.selection:
             icon = app.get("icon_selected")
         else:
             icon = app.get("icon_normal")
 
         if icon:
-            print(f"[Launcher] App: -{app['name']}- has icon!")
             self.display_queue.put(("draw_base_image", icon, x, y))
 
 
@@ -112,5 +109,4 @@ class App(AppBase):
         return None
 
     def stop(self):
-        self.display_queue.put(("set_screen", "Launcher", "App stopped"))
         print("[Launcher] Stopped")

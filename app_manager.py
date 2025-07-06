@@ -37,6 +37,7 @@ class AppManager:
                 print(f"[AppManager] No 'App' class found in {app_name}")
                 return None
 
+            self.context["app_path"] = os.path.join(self.apps_dir, app_name, "")
             app_instance = mod.App(self.context)
             if not isinstance(app_instance, AppBase):
                 print(f"[AppManager] App '{app_name}' does not inherit from AppBase")
