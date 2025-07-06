@@ -17,10 +17,10 @@ IS_WINDOWS = platform.system() == "Windows"
 
 if IS_WINDOWS:
     from config.emulator.paths import PIPER_BIN, MODEL_PATH, CACHE_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH
-    from config.emulator.paths import FONT_PATH, FONT_ITALIC_PATH, FONT_BOLD_PATH
+    from config.emulator.paths import FONT_PATH, FONT_SMALL_PATH, FONT_BOLD_PATH
 else:
-    from config.paths import PIPER_BIN, MODEL_PATH, CACHE_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH, FONT_ITALIC_PATH
-    from config.paths import FONT_PATH, FONT_ITALIC_PATH, FONT_BOLD_PATH
+    from config.paths import PIPER_BIN, MODEL_PATH, CACHE_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH
+    from config.paths import FONT_PATH, FONT_SMALL_PATH, FONT_BOLD_PATH
     
 # -- Emulator Setup --- #
 
@@ -458,6 +458,10 @@ if not os.path.isfile(FONT_BOLD_PATH):
     raise FileNotFoundError(f"Bold font file not found: {FONT_BOLD_PATH}")
 fontLargeBold = ImageFont.truetype(FONT_BOLD_PATH, fontLargeSize)
 
+if not os.path.isfile(FONT_SMALL_PATH):
+    raise FileNotFoundError(f"Small font file not found: {FONT_SMALL_PATH}")
+fontSmall = ImageFont.truetype(FONT_SMALL_PATH, 4)
+
 # --- Render composite display --- #
 def update_display():
     with draw_lock:
@@ -661,7 +665,7 @@ def play_audio_sync(audio_bytes):
         except Exception as e:
             print(f"[Audio] aplay error: {e}", flush=True)
 
-def run_tts(text):
+def run_tts(text, background=False):
     if not text.strip():
         return
     
@@ -671,43 +675,51 @@ def run_tts(text):
         with open(cached_file, "rb") as f:
             audio_data = f.read()
 
-        display_queue.put(("set_screen", "Cached", text))
-        display_queue.put(("draw_icon", speaking_icon, 0, height - 8))
+        if not background:
+            display_queue.put(("set_screen", "Cached", text))
+            display_queue.put(("draw_icon", speaking_icon, 0, height - 8))
         play_thread = threading.Thread(target=play_audio_sync, args=(audio_data,))
         play_thread.start()
         play_thread.join()
-        display_queue.put(("clear_icon",))
+        if not background:
+            display_queue.put(("clear_icon",))
 
     else:
-        display_queue.put(("set_screen", "Generating", text))
-        display_queue.put(("draw_icon", generating_icon, 0, height - 8))
+        if not background:
+            display_queue.put(("set_screen", "Generating", text))
+            display_queue.put(("draw_icon", generating_icon, 0, height - 8))
 
         try:
             mappedText = apply_word_map(text, word_map)
             raw_audio = piper_instance.synthesize(mappedText)
-            display_queue.put(("clear_icon",))
+            if not background:
+                display_queue.put(("clear_icon",))
 
             if raw_audio:
                 with open(cached_file, "wb") as f:
                     f.write(raw_audio)
 
-                display_queue.put(("set_screen", "Talking", text))
-                display_queue.put(("draw_icon", speaking_icon, 0, height - 8))
+                if not background:
+                    display_queue.put(("set_screen", "Talking", text))
+                    display_queue.put(("draw_icon", speaking_icon, 0, height - 8))
                 play_thread = threading.Thread(target=play_audio_sync, args=(raw_audio,))
                 play_thread.start()
                 play_thread.join()
-                display_queue.put(("clear_icon",))
+                if not background:
+                    display_queue.put(("clear_icon",))
             else:
-                display_queue.put(("clear_icon",))
-                display_queue.put(("set_screen", "Error", "No audio generated"))
+                if not background:
+                    display_queue.put(("clear_icon",))
+                    display_queue.put(("set_screen", "Error", "No audio generated"))
         except Exception as e:
-            display_queue.put(("clear_icon",))
+            if not background:
+                display_queue.put(("clear_icon",))
+                display_queue.put(("set_screen", "Error", "TTS Generation Failed"))
             print(f"Error generating or playing TTS: {e}", flush=True)
-            display_queue.put(("set_screen", "Error", "TTS Generation Failed"))
 
 # --- Input --- #
 
-from config.keymap import key_map, shift_key_map
+from config.keymap import shift_key_map
 
 def find_keyboard():
     devices = [InputDevice(path) for path in evdev.list_devices()]
@@ -825,6 +837,7 @@ def main():
         "load_icon": load_icon,
         "play_sfx": play_sfx,
         "fonts": {
+            "small": fontSmall,
             "default": font,
             "bold": fontBold,
             "large": fontLarge,

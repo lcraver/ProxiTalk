@@ -41,7 +41,7 @@ class App(AppBase):
         
         # read the current time if 'Enter' is pressed
         elif keycode == "KEY_ENTER":
-            self.context["run_tts"](f"The current time is {self.current_time}")
+            self.context["run_tts"](f"The current time is {self.current_time}", background=True)
         
         # switch to the launcher if 'Esc' is pressed
         elif keycode == "KEY_ESC":

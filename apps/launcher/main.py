@@ -18,8 +18,6 @@ class App(AppBase):
         self.drawAllApps()
         
     def drawAllApps(self):
-        print("[Launcher] Drawing all apps")
-
         self.display_queue.put(("clear_base_area", 0, 0, 128, 64))
 
         icons = []
