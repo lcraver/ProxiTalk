@@ -164,6 +164,8 @@ self.display_queue.put(("draw_text", x, y, "text", font, fill))
 ```python
 # Play sound effects (place audio files in your app directory)
 self.play_sfx(self.path + "sound.wav")
+# Play background music (looped)
+self.play_music(self.path + "music.wav", loop=True)
 
 # Text-to-speech
 # The background=True option allows TTS to run without drawing to the screen
@@ -206,7 +208,7 @@ class App(AppBase):
     def __init__(self, context):
         super().__init__(context)
         self.display_queue = context["display_queue"]
-        self.play_sfx = context["play_sfx"]
+        self.play_sfx = context["audio"]["play_sfx"]
         self.path = context["app_path"]
         
         # Game state

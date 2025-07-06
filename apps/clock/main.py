@@ -7,7 +7,7 @@ class App(AppBase):
         self.display_queue = context["display_queue"]
         self.t = 0
         self.current_time = time.strftime("%H:%M:%S", time.localtime())
-        self.play_sfx = context["play_sfx"]
+        self.play_sfx = context["audio"]["play_sfx"]
         self.path = context["app_path"]
 
     def start(self):

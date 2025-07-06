@@ -253,6 +253,80 @@ def play_sfx(path: str):
     threading.Thread(target=play_sfx_internal, args=(path,), daemon=True).start()
 
 
+# --- Music --- #
+
+class MusicManager:
+    def __init__(self):
+        self.current_music = None
+        self.is_playing = False
+        self.volume = 0.3
+        self.music_thread = None
+        self._stop_event = threading.Event()
+        
+    def play_music(self, path: str, loop: bool = True):
+        if not os.path.isfile(path):
+            print(f"[Music] File not found: {path}", flush=True)
+            return
+            
+        self.stop_music()
+        self._stop_event.clear()
+        self.current_music = path
+        self.is_playing = True
+        
+        if IS_WINDOWS:
+            self.music_thread = threading.Thread(
+                target=self._play_music_loop, 
+                args=(path, loop), 
+                daemon=True
+            )
+            self.music_thread.start()
+    
+    def _play_music_loop(self, path: str, loop: bool):
+        try:
+            while not self._stop_event.is_set() and self.is_playing:
+                sound = pygame.mixer.Sound(path)
+                sound.set_volume(self.volume)
+                channel = sound.play()
+                
+                # Wait for the sound to finish or stop event
+                while channel.get_busy() and not self._stop_event.is_set():
+                    pygame.time.wait(100)
+                
+                if not loop:
+                    break
+                    
+        except Exception as e:
+            print(f"[Music] Error playing music '{path}': {e}", flush=True)
+        finally:
+            self.is_playing = False
+    
+    def stop_music(self):
+        self.is_playing = False
+        self._stop_event.set()
+        if self.music_thread and self.music_thread.is_alive():
+            self.music_thread.join(timeout=1.0)
+        self.current_music = None
+    
+    # Set music volume (0.0 to 1.0)
+    def set_volume(self, volume: float):
+        self.volume = max(0.0, min(1.0, volume))
+    
+    def is_music_playing(self):
+        return self.is_playing
+
+# Global music manager
+music_manager = MusicManager()
+
+def play_music(path: str, loop: bool = True):
+    music_manager.play_music(path, loop)
+
+def stop_music():
+    music_manager.stop_music()
+
+def set_music_volume(volume: float):
+    music_manager.set_volume(volume)
+
+
 # --- Piper TTS --- #
 
 if IS_WINDOWS:
@@ -835,7 +909,12 @@ def main():
         "run_tts": run_tts,
         "pressed_keys": keys_pressed,
         "load_icon": load_icon,
-        "play_sfx": play_sfx,
+        "audio": {
+            "play_sfx": play_sfx,
+            "play_music": play_music,
+            "stop_music": stop_music,
+            "set_music_volume": set_music_volume,
+        },
         "fonts": {
             "small": fontSmall,
             "default": font,

@@ -7,7 +7,7 @@ class App(AppBase):
     def __init__(self, context):
         super().__init__(context)
         self.display_queue = context["display_queue"]
-        self.play_sfx = context["play_sfx"]
+        self.play_sfx = context["audio"]["play_sfx"]
         self.run_tts = context["run_tts"]
         self.path = context["app_path"]
         
