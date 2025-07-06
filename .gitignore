@@ -180,4 +180,5 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
-piper_cache/*
+piper_cache/*.*
+piper_cache
