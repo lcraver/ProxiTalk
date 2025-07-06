@@ -217,19 +217,19 @@ apps = load_apps()
 
 icons = {}
 
-def load_icon(name, state=None):
-    pathbase = ICON_DIR + "\\" + name
+def load_base_icon(name, state=None):
+    path = os.path.join(ICON_DIR, name)
     
     if state:
-        img = Image.open(pathbase + "_" + state + ".png").convert("1")
+        img = Image.open(path + "_" + state + ".png").convert("1")
     else:
-        img = Image.open(pathbase + ".png").convert("1")
+        img = Image.open(path + ".png").convert("1")
 
     return img
 
-searching_icon = load_icon("info")
-generating_icon = load_icon("settings")
-speaking_icon = load_icon("notes")
+searching_icon = load_base_icon("info")
+generating_icon = load_base_icon("settings")
+speaking_icon = load_base_icon("notes")
 
 # --- Audio Playback --- #
 
@@ -797,14 +797,19 @@ from config.keymap import shift_key_map
 
 def find_keyboard():
     devices = [InputDevice(path) for path in evdev.list_devices()]
+    print(f"Devices found: {[device.name for device in devices]}", flush=True)
     for device in devices:
         print(f"Checking device: {device.name} at {device.path}", flush=True)
         if 'mouse' in device.name.lower() or 'touchpad' in device.name.lower():
+            print("Skipping mouse/touchpad device", flush=True)
             continue
-        if 'bluetooth keyboard' in device.name.lower():
+        if 'keyboard' in device.name.lower():
             display_queue.put(("set_screen", "Connecting", f"Found Keyboard: {device.name}"))
+            print(f"Keyboard found: {device.name} at {device.path}", flush=True)
             return device
+    print("No keyboard found in devices", flush=True)
     return None
+
 
 if IS_WINDOWS:
     import keyboard
@@ -866,6 +871,7 @@ else:
             dev = find_keyboard()
             if dev:
                 display_queue.put(("clear_icon",))
+                print(f"Keyboard found: {dev.name} at {dev.path}", flush=True)
                 return dev
 
             tries += 1
@@ -965,6 +971,7 @@ def main():
             try:
                 for event in dev.read_loop():
                     if event.type == ecodes.EV_KEY:
+                        
                         key_event = categorize(event)
                         keycode = key_event.keycode
 
