@@ -216,8 +216,14 @@ apps = load_apps()
 # --- Icons --- #
 
 icons = {}
+# Cache for converted icons to avoid repeated mode conversions
+_icon_cache = {}
 
 def load_base_icon(name, state=None):
+    cache_key = (name, state)
+    if cache_key in _icon_cache:
+        return _icon_cache[cache_key]
+        
     path = os.path.join(ICON_DIR, name)
     
     if state:
@@ -225,7 +231,27 @@ def load_base_icon(name, state=None):
     else:
         img = Image.open(path + ".png").convert("1")
 
+    # Cache the converted icon
+    _icon_cache[cache_key] = img
     return img
+
+def load_icon(app_name, state=None):
+    cache_key = (app_name, state)
+    if cache_key in _icon_cache:
+        return _icon_cache[cache_key]
+        
+    if state:
+        icon_path = os.path.join(APPS_DIR, app_name, f"icon_{state}.png")
+    else:
+        icon_path = os.path.join(APPS_DIR, app_name, "icon.png")
+        
+    if os.path.isfile(icon_path):
+        img = Image.open(icon_path).convert("1")
+        # Cache the converted icon
+        _icon_cache[cache_key] = img
+        return img
+    
+    return None
 
 searching_icon = load_base_icon("info")
 generating_icon = load_base_icon("settings")
@@ -515,40 +541,60 @@ top = padding
 bottom = height - padding
 x = 0
 
-# check if font files exist
-if not os.path.isfile(FONT_PATH):
-    raise FileNotFoundError(f"Font file not found: {FONT_PATH}")
+# Load fonts once and check existence
+def load_fonts():
+    required_fonts = [
+        (FONT_PATH, "Font file"),
+        (FONT_BOLD_PATH, "Bold font file"), 
+        (FONT_SMALL_PATH, "Small font file")
+    ]
+    
+    for path, name in required_fonts:
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"{name} not found: {path}")
+
+load_fonts()
+
 font = ImageFont.truetype(FONT_PATH, bodyFontSize)
-if not os.path.isfile(FONT_BOLD_PATH):
-    raise FileNotFoundError(f"Bold font file not found: {FONT_BOLD_PATH}")
 fontBold = ImageFont.truetype(FONT_BOLD_PATH, bodyFontSize)
 
 fontLargeSize = 24
-
-if not os.path.isfile(FONT_PATH):
-    raise FileNotFoundError(f"Font file not found: {FONT_PATH}")
 fontLarge = ImageFont.truetype(FONT_PATH, fontLargeSize)
-if not os.path.isfile(FONT_BOLD_PATH):
-    raise FileNotFoundError(f"Bold font file not found: {FONT_BOLD_PATH}")
 fontLargeBold = ImageFont.truetype(FONT_BOLD_PATH, fontLargeSize)
-
-if not os.path.isfile(FONT_SMALL_PATH):
-    raise FileNotFoundError(f"Small font file not found: {FONT_SMALL_PATH}")
 fontSmall = ImageFont.truetype(FONT_SMALL_PATH, 4)
 
 # --- Render composite display --- #
+# Track if display needs updating to avoid unnecessary redraws
+display_dirty = True
+
 def update_display():
+    global display_dirty
+    if not display_dirty:
+        return
+        
     with draw_lock:
         composite_layer.paste(base_layer)
         composite_layer.paste(base_layer_2, (0, 0), base_layer_2)
         composite_layer.paste(overlay_layer, (0, 0), overlay_layer)
         disp.image(composite_layer)
         disp.show()
+        display_dirty = False
+
+def mark_display_dirty():
+    global display_dirty
+    display_dirty = True
 
 # --- Display Functions (modified to use layers) --- #
 
-# Wrap text to fit screen width
+# Wrap text to fit screen width with caching
+_text_wrap_cache = {}
+
 def wrap_text_by_pixel_width(text, font, max_width):
+    # Use cache key to avoid recalculating same text
+    cache_key = (text, font, max_width)
+    if cache_key in _text_wrap_cache:
+        return _text_wrap_cache[cache_key]
+    
     words = text.split(' ')
     lines = []
     current_line = ""
@@ -561,7 +607,9 @@ def wrap_text_by_pixel_width(text, font, max_width):
         else:
             if current_line:
                 lines.append(current_line)
-            if base_draw.textlength(word, font=font) > max_width:
+            # Only do character-by-character if word is actually too long
+            word_width = base_draw.textlength(word, font=font)
+            if word_width > max_width:
                 partial_word = ""
                 for char in word:
                     test_partial = partial_word + char
@@ -578,6 +626,11 @@ def wrap_text_by_pixel_width(text, font, max_width):
     if current_line:
         lines.append(current_line)
 
+    # Cache result (limit cache size to prevent memory bloat)
+    if len(_text_wrap_cache) > 100:
+        _text_wrap_cache.clear()
+    _text_wrap_cache[cache_key] = lines
+    
     return lines
 
 # Last known cursor position
@@ -599,30 +652,32 @@ def display_set_screen(title, text):
             base_draw.text((x, startY + i * bodyLineHeight), wrapped_lines[i], font=font, fill=255)
             lastDrawY = startY + i * bodyLineHeight
             lastDrawX = base_draw.textlength(wrapped_lines[i], font)
-        update_display()
+        mark_display_dirty()
 
 def display_draw_text(layer, font, text, x=0, y=0):
     with draw_lock:
         layer.text((x, y), text, font=font, fill=255)
-        update_display()
+        mark_display_dirty()
 
 def display_draw_icon(layer, icon_img, x=0, y=height - 8):
     with draw_lock:
-        if icon_img.mode != "1":
+        # Icon should already be converted to mode "1" from cache
+        if icon_img and icon_img.mode != "1":
             icon_img = icon_img.convert("1")
-        layer.paste(icon_img, (x, y), icon_img)
-        update_display()
+        if icon_img:
+            layer.paste(icon_img, (x, y), icon_img)
+        mark_display_dirty()
 
 def display_clear_area(layer, x=0, y=0, width=128, height=64):
     with draw_lock:
         layer.rectangle((x, y, x + width, y + height), fill=0)
-        update_display()
+        mark_display_dirty()
 
 def display_draw_blinking_cursor(x, y, isOn):
     with draw_lock:
         color = 255 if isOn else 0
         base_draw_2.rectangle((int(x)+2, int(y), int(x)+4, int(y)+bodyLineHeight), fill=color)
-        update_display()
+        mark_display_dirty()
 
 # --- Display Thread --- #
 
@@ -630,6 +685,7 @@ def display_thread_func():
     print("[Display Thread] Started", flush=True)
     is_cursor_on = False
     last_cursor_update = 0
+    last_display_update = 0
 
     try:
         while True:
@@ -674,10 +730,16 @@ def display_thread_func():
                         break
 
             now = time.time()
+            # Cursor blinking
             if now - last_cursor_update > 0.5:
-                # is_cursor_on = not is_cursor_on
+                is_cursor_on = not is_cursor_on
                 display_draw_blinking_cursor(lastDrawX, lastDrawY, is_cursor_on)
                 last_cursor_update = now
+            
+            # Throttle display updates to reduce CPU usage (max 30 FPS)
+            if now - last_display_update > 0.033:  # ~30 FPS
+                update_display()
+                last_display_update = now
 
     except Exception as e:
         print(f"[Display Thread] Crashed with exception: {e}", flush=True)
