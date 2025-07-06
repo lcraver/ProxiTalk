@@ -15,6 +15,7 @@ class App(AppBase):
         self.emulator = context.get("emulator", False)
         self.current_ui_volume = self.UI_STEPS - 5
         self.brightness_level = 128  # track brightness locally
+        self.display_inverted = False  # track inversion state
         
         self.clear_icon_thread = None
         self.clear_icon_lock = threading.Lock()
@@ -53,6 +54,10 @@ class App(AppBase):
                 self.brightness_level = max(self.brightness_level - 32, 0)
                 self.set_display_brightness(self.brightness_level)
                 self.show_brightness_feedback("B:")
+            case 'KEY_HOMEPAGE':  # Use F1 key for screen inversion toggle
+                self.display_inverted = not self.display_inverted
+                self.set_display_inverted(self.display_inverted)
+                self.show_inversion_feedback("I:")
 
     def show_volume_feedback(self, message):
         icon = self.generate_bar_icon(self.current_ui_volume / self.UI_STEPS * 100, label=message)
@@ -100,6 +105,23 @@ class App(AppBase):
         self.display_queue.put(("clear_overlay_area", pos_x, pos_y, icon.width, icon.height))
         self.display_queue.put(("draw_overlay_image", icon, pos_x, pos_y))
         self._start_clear_timer(pos_x, pos_y, icon.width, icon.height)
+
+    def show_inversion_feedback(self, message):
+        # Show inversion status as text instead of a bar
+        status_text = f"{message} {'ON' if self.display_inverted else 'OFF'}"
+        text_width, text_height = self.context["get_text_size"](status_text, self.font)
+        
+        # Create a simple text image
+        img = Image.new("1", (text_width, text_height), 0)
+        draw = ImageDraw.Draw(img)
+        draw.text((0, 0), status_text, font=self.font, fill=1)
+
+        pos_x = 1
+        pos_y = 64 - img.height - 1  # Position at the bottom left
+        
+        self.display_queue.put(("clear_overlay_area", pos_x, pos_y, img.width, img.height))
+        self.display_queue.put(("draw_overlay_image", img, pos_x, pos_y))
+        self._start_clear_timer(pos_x, pos_y, img.width, img.height)
         
     def _start_clear_timer(self, x, y, width, height, delay=1.5):
         with self.clear_icon_lock:

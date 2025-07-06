@@ -68,13 +68,13 @@ class App(AppBase):
         pass
     
     def onkeyup(self, keycode):
-        if keycode == "KEY_LEFT":
+        if keycode == "KEY_LEFT" or keycode == "KEY_A":
             self.selection = (self.selection - 1) % self.app_count
             self.drawAllApps()
-        elif keycode == "KEY_RIGHT":
+        elif keycode == "KEY_RIGHT" or keycode == "KEY_D":
             self.selection = (self.selection + 1) % self.app_count
             self.drawAllApps()
-        elif keycode == "KEY_ENTER":
+        elif keycode == "KEY_ENTER" or keycode == "KEY_SPACE":
             if self.app_count > 0:
                 # Swap to the selected app
                 selected_app = self.get_selected_app()
