@@ -131,10 +131,10 @@ class App(AppBase):
         # Draw score in corner
         font = self.context["fonts"]["small"]
         font_text = f"{self.score}"
-        font_width, font_height = draw.textsize(font_text, font=font)
+        font_width, font_height = self.context["get_text_size"](font_text, font)
         
         # draw box around score based on font size
-        draw.rectangle([1, 1, 3 + font_width, 3 + font_height], outline=1, fill=0)
+        draw.rectangle([1, 1, 3 + font_width, 4 + font_height], outline=1, fill=0)
         draw.text((3, 2), font_text, font=font, fill=1)
 
         # Send to display
@@ -154,24 +154,24 @@ class App(AppBase):
         
         # Game Over text
         game_over_text = "GAME OVER"
-        text_width, text_height = draw.textsize(game_over_text, font=font)
+        text_width, text_height = self.context["get_text_size"](game_over_text, font)
         draw.text((64 - text_width/2, y), game_over_text, font=font, fill=1)
         y += text_height + 2  # Move down after game over text
         
         # Score
         score_text = f"Score: {self.score}"
-        score_width, score_height = draw.textsize(score_text, font=small_font)
+        score_width, score_height = self.context["get_text_size"](score_text, small_font)
         draw.text((64 - score_width/2, y), score_text, font=small_font, fill=1)
         y += score_height + 2  # Move down after score text
 
         # Instructions
         restart_text = "R: Restart"
-        restart_width, restart_height = draw.textsize(restart_text, font=small_font)
+        restart_width, restart_height = self.context["get_text_size"](restart_text, small_font)
         draw.text((64 - restart_width/2, y), restart_text, font=small_font, fill=1)
         y += restart_height + 2  # Move down after restart text
         
         exit_text = "ESC: Exit"
-        exit_width, exit_height = draw.textsize(exit_text, font=small_font)
+        exit_width, exit_height = self.context["get_text_size"](exit_text, small_font)
         draw.text((64 - exit_width/2, y), exit_text, font=small_font, fill=1)
         # Send to display
         self.display_queue.put(("clear_base",))

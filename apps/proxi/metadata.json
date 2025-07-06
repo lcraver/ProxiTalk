@@ -1,4 +1,5 @@
 {
   "name": "Proxi",
-  "version": "1.0"
+  "version": "1.0",
+  "cursor_enabled": true
 }

@@ -9,6 +9,8 @@ class App(AppBase):
         self.current_time = time.strftime("%H:%M:%S", time.localtime())
         self.play_sfx = context["audio"]["play_sfx"]
         self.path = context["app_path"]
+        self.width = context["screen_width"]
+        self.height = context["screen_height"]
 
     def start(self):
         pass
@@ -24,9 +26,9 @@ class App(AppBase):
             
             # get font width and height
             font = self.context["fonts"]["large_bold"]
-            font_width, font_height = font.getsize(self.current_time)
+            font_width, font_height = self.context["get_text_size"](self.current_time, font)
 
-            self.display_queue.put(("draw_base_text", font, self.current_time, 64-(font_width/2), 32-(font_height/2)))
+            self.display_queue.put(("draw_base_text", font, self.current_time, (self.width/2)-(font_width/2), (self.height/2)-(font_height/2)-6))
             self.play_sfx(self.path + "tick.wav")
             # play chime every time the seconds reach 0 (every 60 seconds)
             if self.current_time.endswith(":00"):

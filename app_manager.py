@@ -19,6 +19,7 @@ class AppManager:
         self.loaded_apps: Dict[str, AppBase] = {}
         self.app_threads: Dict[str, threading.Thread] = {}
         self.running_apps: Dict[str, bool] = {}
+        self.app_cursor_preferences: Dict[str, bool] = {}  # Track cursor preferences per app
         self._stop_all = False
         
     def load_app_instance(self, app_name: str) -> Optional[AppBase]:
@@ -71,7 +72,9 @@ class AppManager:
         app_instance = self.load_app_instance(app_name)
         if app_instance:
             self.loaded_apps[app_name] = app_instance
-            print(f"[AppManager] Loaded app: {app_name}")
+            # Load and store cursor preference
+            self.app_cursor_preferences[app_name] = self.get_app_cursor_preference(app_name)
+            print(f"[AppManager] Loaded app: {app_name} (cursor: {self.app_cursor_preferences[app_name]})")
             return True
         return False
     
@@ -91,6 +94,8 @@ class AppManager:
         def app_loop():
             try:
                 print(f"[AppManager] Starting app: {app_name}")
+                # Set cursor state for this app
+                self.set_app_cursor_state(app_name)
                 app_instance.start()
                 
                 sleep_time = 1.0 / update_rate_hz
@@ -123,6 +128,9 @@ class AppManager:
             
         print(f"[AppManager] Stopping app: {app_name}")
         self.running_apps[app_name] = False
+        
+        # Clear cursor when stopping an app
+        self.clear_cursor()
         
         if app_name in self.app_threads:
             thread = self.app_threads[app_name]
@@ -242,6 +250,12 @@ class AppManager:
                 print(f"[AppManager] Failed to stop source app: {from_app}")
                 return False
 
+        # Ensure cursor is completely cleared between apps
+        self.clear_cursor()
+        # Also clear the cursor layer completely
+        if "display_queue" in self.context:
+            self.context["display_queue"].put(("clear_base_2",))
+
         if from_app in self.loaded_apps:
             del self.loaded_apps[from_app]
             print(f"[AppManager] Unloaded app: {from_app}")
@@ -272,3 +286,33 @@ class AppManager:
         swap_thread = threading.Thread(target=delayed_swap, daemon=True, name=f"Swap-{from_app}-to-{to_app}")
         swap_thread.start()
         print(f"[AppManager] Scheduled async swap from '{from_app}' to '{to_app}'")
+
+    def get_app_cursor_preference(self, app_name: str) -> bool:
+        """Get app's cursor preference from metadata, defaulting to False."""
+        try:
+            import json
+            metadata_path = os.path.join(self.apps_dir, app_name, "metadata.json")
+            if os.path.isfile(metadata_path):
+                with open(metadata_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    return data.get("cursor_enabled", False)  # Default to False if not specified
+        except Exception as e:
+            print(f"[AppManager] Error reading cursor preference for {app_name}: {e}")
+        return False  # Default to cursor disabled
+    
+    def set_app_cursor_state(self, app_name: str):
+        """Set the cursor state for the given app."""
+        cursor_enabled = self.app_cursor_preferences.get(app_name, False)  # Default to False
+        if "cursor" in self.context:
+            self.context["cursor"]["set_app_enabled"](cursor_enabled)
+            print(f"[AppManager] Set cursor for '{app_name}': {cursor_enabled}")
+    
+    def clear_cursor(self):
+        """Clear cursor when stopping apps."""
+        if "cursor" in self.context:
+            self.context["cursor"]["set_app_enabled"](False)
+            self.context["cursor"]["clear_area"]()  # Clear any remaining cursor artifacts
+        
+        # Also directly clear the cursor layer
+        if "display_queue" in self.context:
+            self.context["display_queue"].put(("clear_base_2",))

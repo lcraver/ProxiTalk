@@ -328,25 +328,25 @@ class App(AppBase):
         
         # Game Over text
         game_over_text = "GAME OVER"
-        text_width, text_height = draw.textsize(game_over_text, font=font)
+        text_width, text_height = self.context["get_text_size"](game_over_text, font)
         draw.text((64 - text_width/2, y), game_over_text, font=font, fill=1)
         y += text_height + 2
         
         # Score
         score_text = f"Score: {self.score}"
-        score_width, score_height = draw.textsize(score_text, font=small_font)
+        score_width, score_height = self.context["get_text_size"](score_text, small_font)
         draw.text((64 - score_width/2, y), score_text, font=small_font, fill=1)
         y += score_height + 2
         
         # Level
         level_text = f"Level: {self.level} / {self.lines_cleared}"
-        level_width, level_height = draw.textsize(level_text, font=small_font)
+        level_width, level_height = self.context["get_text_size"](level_text, small_font)
         draw.text((64 - level_width/2, y), level_text, font=small_font, fill=1)
         y += level_height + 2
         
         # Instructions
         restart_text = "R: Retry / ESC: Exit"
-        restart_width, restart_height = draw.textsize(restart_text, font=small_font)
+        restart_width, restart_height = self.context["get_text_size"](restart_text, small_font)
         draw.text((64 - restart_width/2, y), restart_text, font=small_font, fill=1)
         
         # Send to display

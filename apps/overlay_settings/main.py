@@ -11,12 +11,10 @@ class App(AppBase):
         self.MIN_VOL = 60
         self.MAX_VOL = 100
         self.UI_STEPS = 20
-        self.VOLUME_CONTROL = "Speaker"
+        self.VOLUME_CONTROL = "PCM"
         self.emulator = context.get("emulator", False)
         self.current_ui_volume = self.UI_STEPS - 5
         self.brightness_level = 128  # track brightness locally
-        
-        self.FONT_PATH = context["FONT_PATH"]
         
         self.clear_icon_thread = None
         self.clear_icon_lock = threading.Lock()
@@ -24,6 +22,7 @@ class App(AppBase):
         
         self.volume_icon = context["load_icon"]("info")
         self.brightness_icon = context["load_icon"]("info_selected")
+        self.font = context["fonts"]["small"]
 
         actual_volume = self.ui_to_actual_volume(self.current_ui_volume)
         self.set_actual_volume(actual_volume)
@@ -68,9 +67,8 @@ class App(AppBase):
     def generate_bar_icon(self, volume_percent, width=24, height=4, label=None):
         volume_percent = max(0, min(100, volume_percent))
 
-        font = ImageFont.truetype(self.FONT_PATH, height+1) if label else None
-        label_width, label_height = font.getsize(label) if label else (0, 0)
-        label_width += 2 if label else 0  # Padding
+        label_width, label_height = self.context["get_text_size"](label, self.font) if label else (0, 0)
+        label_width += 1 if label else 0  # Padding
 
         total_width = label_width + width
         img = Image.new("1", (total_width, height), 0)
@@ -83,9 +81,7 @@ class App(AppBase):
 
         # Center text vertically
         if label:
-            text_y = (height - label_height) // 2
-            draw.text((0, text_y), label, font=font, fill=1)
-
+            draw.text((0, -1), label, font=self.font, fill=1)
 
         draw.rectangle([bar_x0, 0, bar_x1, height - 1], outline=1, fill=0)
 

@@ -567,9 +567,9 @@ fontSmall = ImageFont.truetype(FONT_SMALL_PATH, 4)
 # Track if display needs updating to avoid unnecessary redraws
 display_dirty = True
 
-def update_display():
+def update_display(force=False):
     global display_dirty
-    if not display_dirty:
+    if not display_dirty and not force:
         return
         
     with draw_lock:
@@ -633,14 +633,23 @@ def wrap_text_by_pixel_width(text, font, max_width):
     
     return lines
 
-# Last known cursor position
+# Cursor state management
 lastDrawX = 0
 lastDrawY = 0
+prevDrawX = 0  # Previous cursor X position
+prevDrawY = 0  # Previous cursor Y position
+cursor_enabled = True  # Global cursor enable/disable
+current_app_cursor_enabled = False  # Current app's cursor preference (default to False)
+cursor_state_changed = False  # Track if cursor state needs updating
+last_cursor_visible_state = False  # Track last visible state to avoid redundant updates
 
 def display_set_screen(title, text):
-    global lastDrawX, lastDrawY
+    global lastDrawX, lastDrawY, prevDrawX, prevDrawY
     with draw_lock:
         base_draw.rectangle((0, 0, width, height), outline=0, fill=0)
+        # Clear the cursor layer as well when setting a new screen
+        base_draw_2.rectangle((0, 0, width, height), outline=0, fill=0)
+        
         wrapped_lines = wrap_text_by_pixel_width(text, font, width-4)
         title_width = math.ceil(base_draw.textlength(title, fontBold))
         title_top = top + (bodyLineHeight - bodyFontSize) // 2
@@ -650,9 +659,15 @@ def display_set_screen(title, text):
         max_lines = (height - startY) // bodyLineHeight
         for i in range(min(len(wrapped_lines), max_lines)):
             base_draw.text((x, startY + i * bodyLineHeight), wrapped_lines[i], font=font, fill=255)
+            # Store previous position before updating
+            prevDrawY = lastDrawY
+            prevDrawX = lastDrawX
+            # Update cursor position
             lastDrawY = startY + i * bodyLineHeight
             lastDrawX = base_draw.textlength(wrapped_lines[i], font)
         mark_display_dirty()
+        # Force immediate update for screen changes to prevent black screens
+        update_display(force=True)
 
 def display_draw_text(layer, font, text, x=0, y=0):
     with draw_lock:
@@ -674,9 +689,77 @@ def display_clear_area(layer, x=0, y=0, width=128, height=64):
         mark_display_dirty()
 
 def display_draw_blinking_cursor(x, y, isOn):
+    global current_app_cursor_enabled, cursor_state_changed, last_cursor_visible_state, prevDrawX, prevDrawY
     with draw_lock:
-        color = 255 if isOn else 0
-        base_draw_2.rectangle((int(x)+2, int(y), int(x)+4, int(y)+bodyLineHeight), fill=color)
+        # Check if cursor should be visible
+        cursor_should_be_visible = cursor_enabled and current_app_cursor_enabled
+        
+        # Clear previous cursor position if position changed
+        if (int(x) != int(prevDrawX) or int(y) != int(prevDrawY)) and cursor_should_be_visible:
+            # Clear old cursor position
+            base_draw_2.rectangle((int(prevDrawX)+2, int(prevDrawY), int(prevDrawX)+4, int(prevDrawY)+bodyLineHeight), fill=0)
+            prevDrawX = x
+            prevDrawY = y
+        
+        # Only update if state actually changed or forced by isOn parameter
+        if cursor_should_be_visible != last_cursor_visible_state or cursor_state_changed:
+            if cursor_should_be_visible:
+                color = 255 if isOn else 0
+                base_draw_2.rectangle((int(x)+2, int(y), int(x)+4, int(y)+bodyLineHeight), fill=color)
+            else:
+                # Clear cursor area when disabled
+                base_draw_2.rectangle((int(x)+2, int(y), int(x)+4, int(y)+bodyLineHeight), fill=0)
+            
+            last_cursor_visible_state = cursor_should_be_visible
+            cursor_state_changed = False
+            mark_display_dirty()
+        elif cursor_should_be_visible:
+            # Only blink if cursor is visible
+            color = 255 if isOn else 0
+            base_draw_2.rectangle((int(x)+2, int(y), int(x)+4, int(y)+bodyLineHeight), fill=color)
+            mark_display_dirty()
+
+def set_cursor_enabled(enabled):
+    """Enable or disable cursor globally"""
+    global cursor_enabled, cursor_state_changed
+    if cursor_enabled != enabled:
+        cursor_enabled = enabled
+        cursor_state_changed = True
+        print(f"[Cursor] Global cursor set to: {enabled}")
+
+def set_app_cursor_enabled(enabled):
+    """Enable or disable cursor for the current app"""
+    global current_app_cursor_enabled, cursor_state_changed
+    if current_app_cursor_enabled != enabled:
+        current_app_cursor_enabled = enabled
+        cursor_state_changed = True
+        print(f"[Cursor] App cursor set to: {enabled}")
+        
+        # If disabling cursor, immediately clear the cursor area
+        if not enabled:
+            with draw_lock:
+                base_draw_2.rectangle((0, 0, width, height), outline=0, fill=0)
+                mark_display_dirty()
+
+def set_cursor_position(x, y):
+    """Set cursor position"""
+    global lastDrawX, lastDrawY, prevDrawX, prevDrawY
+    # Store previous position before updating
+    prevDrawX = lastDrawX
+    prevDrawY = lastDrawY
+    # Set new position
+    lastDrawX = x
+    lastDrawY = y
+
+def clear_cursor_area():
+    """Clear cursor area completely"""
+    global lastDrawX, lastDrawY, prevDrawX, prevDrawY
+    with draw_lock:
+        # Clear current cursor position
+        base_draw_2.rectangle((int(lastDrawX)+2, int(lastDrawY), int(lastDrawX)+4, int(lastDrawY)+bodyLineHeight), fill=0)
+        # Clear previous cursor position if different
+        if prevDrawX != lastDrawX or prevDrawY != lastDrawY:
+            base_draw_2.rectangle((int(prevDrawX)+2, int(prevDrawY), int(prevDrawX)+4, int(prevDrawY)+bodyLineHeight), fill=0)
         mark_display_dirty()
 
 # --- Display Thread --- #
@@ -716,6 +799,12 @@ def display_thread_func():
                         display_draw_icon(overlay_layer, img, x, y)
                     case "clear_base":
                         display_clear_area(base_draw, 0, 0, 128, 64)
+                        # Force immediate update for full screen clears
+                        update_display(force=True)
+                    case "clear_base_2":
+                        display_clear_area(base_draw_2, 0, 0, 128, 64)
+                        # Force immediate update for cursor layer clears
+                        update_display(force=True)
                     case "clear_base_area":
                         _, x, y, width, height = cmd
                         display_clear_area(base_draw, x, y, width, height)
@@ -725,21 +814,34 @@ def display_thread_func():
                     case "draw_cursor":
                         _, x, y, isOn = cmd
                         display_draw_blinking_cursor(x, y, isOn)
+                    case "set_cursor_enabled":
+                        _, enabled = cmd
+                        set_cursor_enabled(enabled)
+                    case "set_app_cursor_enabled":
+                        _, enabled = cmd
+                        set_app_cursor_enabled(enabled)
+                    case "set_cursor_position":
+                        _, x, y = cmd
+                        set_cursor_position(x, y)
+                    case "clear_cursor_area":
+                        clear_cursor_area()
                     case "exit":
                         print("[Display Thread] Exiting on exit command", flush=True)
                         break
 
             now = time.time()
-            # Cursor blinking
-            if now - last_cursor_update > 0.5:
+            # Cursor blinking - only if cursor is enabled and visible
+            cursor_should_be_visible = cursor_enabled and current_app_cursor_enabled
+            if cursor_should_be_visible and now - last_cursor_update > 0.5:
                 is_cursor_on = not is_cursor_on
                 display_draw_blinking_cursor(lastDrawX, lastDrawY, is_cursor_on)
                 last_cursor_update = now
+            elif cursor_state_changed:
+                # Handle cursor state changes immediately
+                display_draw_blinking_cursor(lastDrawX, lastDrawY, False)
             
-            # Throttle display updates to reduce CPU usage (max 30 FPS)
-            if now - last_display_update > 0.033:  # ~30 FPS
-                update_display()
-                last_display_update = now
+            update_display()
+            last_display_update = now
 
     except Exception as e:
         print(f"[Display Thread] Crashed with exception: {e}", flush=True)
@@ -941,6 +1043,25 @@ else:
 
         return None
 
+# Utility function for getting text dimensions using modern getbbox method
+def get_text_size(text, font):
+    """
+    Get text width and height using the modern getbbox method.
+    Returns (width, height) tuple for compatibility with the old textsize method.
+    """
+    # Handle None or empty text
+    if not text:
+        return 0, 0
+        
+    from PIL import ImageDraw
+    # Create a temporary image to get text bbox
+    temp_img = Image.new("1", (1, 1))
+    temp_draw = ImageDraw.Draw(temp_img)
+    bbox = temp_draw.textbbox((0, 0), text, font=font)
+    width = bbox[2] - bbox[0]
+    height = bbox[3] - bbox[1]
+    return width, height
+
 def main():
     # Start display thread
     disp_thread = threading.Thread(target=display_thread_func, daemon=True)
@@ -973,6 +1094,8 @@ def main():
     context = {
         "emulator": IS_WINDOWS,
         "display": disp,
+        "screen_width": width,
+        "screen_height": height,
         "display_queue": display_queue,
         "run_tts": run_tts,
         "pressed_keys": keys_pressed,
@@ -995,6 +1118,14 @@ def main():
             "load": load_app_instance,
             "loaded_apps": loaded_apps,
         },
+        "cursor": {
+            "set_enabled": lambda enabled: display_queue.put(("set_cursor_enabled", enabled)),
+            "set_app_enabled": lambda enabled: display_queue.put(("set_app_cursor_enabled", enabled)),
+            "set_position": lambda x, y: display_queue.put(("set_cursor_position", x, y)),
+            "clear_area": lambda: display_queue.put(("clear_cursor_area",)),
+            "clear_layer": lambda: display_queue.put(("clear_base_2",)),  # Clear entire cursor layer
+        },
+        "get_text_size": get_text_size,
         "hash_text": hash_text,
         "FONT_PATH": FONT_PATH,
         "CACHE_DIR": CACHE_DIR,
