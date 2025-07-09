@@ -26,7 +26,7 @@ class App(AppBase):
         
         # Timing
         self.move_timer = 0
-        self.move_interval = 10  # Move every 10 ticks (0.5 seconds at 20Hz)
+        self.move_interval = 8  # Move every 10 ticks (0.5 seconds at 20Hz)
         
     def reset_game(self):
         """Reset the game to initial state"""

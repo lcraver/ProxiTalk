@@ -15,6 +15,10 @@ from PIL import Image, ImageDraw, ImageFont
 
 IS_WINDOWS = platform.system() == "Windows"
 
+# I2C settings for luma.oled (Linux only)
+I2C_PORT = 1        # I2C port (usually 1 on Raspberry Pi)
+I2C_ADDRESS = 0x3C  # Common I2C address for SSD1306 displays
+
 if IS_WINDOWS:
     from config.emulator.paths import PIPER_BIN, MODEL_PATH, CACHE_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH
     from config.emulator.paths import FONT_PATH, FONT_SMALL_PATH, FONT_BOLD_PATH
@@ -128,15 +132,46 @@ if IS_WINDOWS:
     # Replace real display with emulated one
     disp = EmulatedDisplay(128, 64)
 else:
-    import busio
-    from board import SCL, SDA
-    import adafruit_ssd1306
+    from luma.core.interface.serial import i2c
+    from luma.oled.device import ssd1309
+    
+    # Create I2C interface and SSD1309 device
+    serial = i2c(port=I2C_PORT, address=I2C_ADDRESS)
+    luma_device = ssd1309(serial)
+    
+    # Create compatibility wrapper for luma.oled
+    class LumaDisplayWrapper:
+        def __init__(self, device):
+            self.device = device
+            self.width = device.width
+            self.height = device.height
+            
+        def fill(self, color):
+            """Clear the display with the specified color (0 or 255)"""
+            # Create a blank image and display it
+            blank_image = Image.new("1", (self.width, self.height), color)
+            self.device.display(blank_image)
+            
+        def show(self):
+            """Update the display - no-op for luma.oled as display() handles this"""
+            pass
+            
+        def image(self, img):
+            """Display a PIL image on the device"""
+            self.device.display(img)
+            
+        def stop(self):
+            """Cleanup the display"""
+            self.device.cleanup()
+            
+        def contrast(self, level):
+            """Set contrast - luma.oled does not support this directly"""
+            self.device.contrast(level)
+            pass
+    
+    disp = LumaDisplayWrapper(luma_device)
 
-    i2c = busio.I2C(SCL, SDA)
-    disp = adafruit_ssd1306.SSD1306_I2C(128, 64, i2c)
-
-disp.fill(0)
-disp.show()
+disp.contrast(255)
 
 
 # --- Application Setup --- #
@@ -1204,9 +1239,8 @@ def main():
         if 'app_manager' in locals():
             app_manager.stop_all_apps()
         
-        # Clean up display on Windows
-        if IS_WINDOWS:
-            disp.stop()
+        # Clean up display
+        disp.stop()  # Call our wrapper's stop method which calls cleanup()
 
 if __name__ == "__main__":
     if not is_admin():
