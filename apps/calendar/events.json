@@ -1,0 +1,39 @@
+{
+  "events": [
+    {
+      "id": "1",
+      "title": "Meeting with team",
+      "date": "2025-07-15",
+      "time": "14:00",
+      "description": "Weekly team sync meeting"
+    },
+    {
+      "id": "2",
+      "title": "Doctor appointment",
+      "date": "2025-07-18",
+      "time": "10:30",
+      "description": "Annual checkup"
+    },
+    {
+      "id": "3",
+      "title": "Birthday party",
+      "date": "2025-07-20",
+      "time": "18:00",
+      "description": "Sarah's birthday celebration"
+    },
+    {
+      "id": "4",
+      "title": "Project deadline",
+      "date": "2025-07-25",
+      "time": "23:59",
+      "description": "Final submission for Q3 project"
+    },
+    {
+      "id": "5",
+      "title": "Grocery shopping",
+      "date": "2025-07-12",
+      "time": "16:00",
+      "description": "Weekly grocery run"
+    }
+  ]
+}

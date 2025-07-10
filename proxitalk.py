@@ -568,12 +568,10 @@ overlay_draw = ImageDraw.Draw(overlay_layer)
 composite_draw = ImageDraw.Draw(composite_layer)
 
 # Font setup
-titlePadding = 2
-bodyLineHeight = 12
-bodyFontSize = 12
-padding = -2
+padding = 2
 top = padding
 bottom = height - padding
+bodyLineHeight = 4
 x = 0
 
 # Load fonts once and check existence
@@ -589,6 +587,8 @@ def load_fonts():
             raise FileNotFoundError(f"{name} not found: {path}")
 
 load_fonts()
+
+bodyFontSize = 12
 
 font = ImageFont.truetype(FONT_PATH, bodyFontSize)
 fontBold = ImageFont.truetype(FONT_BOLD_PATH, bodyFontSize)
@@ -669,6 +669,7 @@ def wrap_text_by_pixel_width(text, font, max_width):
     return lines
 
 # Cursor state management
+cursor_width = 0  # Width of the cursor in pixels
 lastDrawX = 0
 lastDrawY = 0
 prevDrawX = 0  # Previous cursor X position
@@ -685,21 +686,22 @@ def display_set_screen(title, text):
         # Clear the cursor layer as well when setting a new screen
         base_draw_2.rectangle((0, 0, width, height), outline=0, fill=0)
         
-        wrapped_lines = wrap_text_by_pixel_width(text, font, width-4)
-        title_width = math.ceil(base_draw.textlength(title, fontBold))
-        title_top = top + (bodyLineHeight - bodyFontSize) // 2
-        base_draw.text((x + width/2 - title_width/2, title_top), title, font=fontBold, fill=255)
+        wrapped_lines = wrap_text_by_pixel_width(text, fontSmall, width-4)
+        title_width = math.ceil(base_draw.textlength(title, fontSmall))
+        title_top = top
+        title_height = fontSmall.getsize(title)[1]
+        base_draw.text((x + width/2 - title_width/2, title_top), title, font=fontSmall, fill=255)
 
-        startY = top + bodyLineHeight + titlePadding
+        startY = top + title_height + padding
         max_lines = (height - startY) // bodyLineHeight
         for i in range(min(len(wrapped_lines), max_lines)):
-            base_draw.text((x, startY + i * bodyLineHeight), wrapped_lines[i], font=font, fill=255)
+            base_draw.text((x, startY + i * bodyLineHeight), wrapped_lines[i], font=fontSmall, fill=255)
             # Store previous position before updating
             prevDrawY = lastDrawY
             prevDrawX = lastDrawX
             # Update cursor position
             lastDrawY = startY + i * bodyLineHeight
-            lastDrawX = base_draw.textlength(wrapped_lines[i], font)
+            lastDrawX = base_draw.textlength(wrapped_lines[i], font=fontSmall)
         mark_display_dirty()
         # Force immediate update for screen changes to prevent black screens
         update_display(force=True)
@@ -732,7 +734,7 @@ def display_draw_blinking_cursor(x, y, isOn):
         # Clear previous cursor position if position changed
         if (int(x) != int(prevDrawX) or int(y) != int(prevDrawY)) and cursor_should_be_visible:
             # Clear old cursor position
-            base_draw_2.rectangle((int(prevDrawX)+2, int(prevDrawY), int(prevDrawX)+4, int(prevDrawY)+bodyLineHeight), fill=0)
+            base_draw_2.rectangle((int(prevDrawX)+2, int(prevDrawY), int(prevDrawX)+3, int(prevDrawY)+bodyLineHeight), fill=0)
             prevDrawX = x
             prevDrawY = y
         
@@ -740,10 +742,10 @@ def display_draw_blinking_cursor(x, y, isOn):
         if cursor_should_be_visible != last_cursor_visible_state or cursor_state_changed:
             if cursor_should_be_visible:
                 color = 255 if isOn else 0
-                base_draw_2.rectangle((int(x)+2, int(y), int(x)+4, int(y)+bodyLineHeight), fill=color)
+                base_draw_2.rectangle((int(x) + 1, int(y), int(x) + 1 + cursor_width, int(y) + bodyLineHeight), fill=color)
             else:
                 # Clear cursor area when disabled
-                base_draw_2.rectangle((int(x)+2, int(y), int(x)+4, int(y)+bodyLineHeight), fill=0)
+                base_draw_2.rectangle((int(x) + 1, int(y), int(x) + 1 + cursor_width, int(y) + bodyLineHeight), fill=0)
             
             last_cursor_visible_state = cursor_should_be_visible
             cursor_state_changed = False
@@ -751,7 +753,7 @@ def display_draw_blinking_cursor(x, y, isOn):
         elif cursor_should_be_visible:
             # Only blink if cursor is visible
             color = 255 if isOn else 0
-            base_draw_2.rectangle((int(x)+2, int(y), int(x)+4, int(y)+bodyLineHeight), fill=color)
+            base_draw_2.rectangle((int(x) + 1, int(y), int(x) + 1 + cursor_width, int(y) + bodyLineHeight), fill=color)
             mark_display_dirty()
 
 def set_cursor_enabled(enabled):
@@ -791,10 +793,10 @@ def clear_cursor_area():
     global lastDrawX, lastDrawY, prevDrawX, prevDrawY
     with draw_lock:
         # Clear current cursor position
-        base_draw_2.rectangle((int(lastDrawX)+2, int(lastDrawY), int(lastDrawX)+4, int(lastDrawY)+bodyLineHeight), fill=0)
+        base_draw_2.rectangle((int(lastDrawX)+1, int(lastDrawY), int(lastDrawX)+2, int(lastDrawY)+bodyLineHeight), fill=0)
         # Clear previous cursor position if different
         if prevDrawX != lastDrawX or prevDrawY != lastDrawY:
-            base_draw_2.rectangle((int(prevDrawX)+2, int(prevDrawY), int(prevDrawX)+4, int(prevDrawY)+bodyLineHeight), fill=0)
+            base_draw_2.rectangle((int(prevDrawX)+1, int(prevDrawY), int(prevDrawX)+2, int(prevDrawY)+bodyLineHeight), fill=0)
         mark_display_dirty()
 
 # --- Display Thread --- #
