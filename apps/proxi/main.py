@@ -67,7 +67,7 @@ class App(AppBase):
             cached_path = os.path.join(self.context["CACHE_DIR"], self.context["hash_text"](old_line) + ".raw")
             if os.path.exists(cached_path):
                 self.currentline = ""
-                self.set_screen("Ready", "Text spoken! Ready for [new input]...")
+                self.set_screen("Ready", "Ready for new input...")
             else:
                 self.set_screen("Input", old_line)
         elif keycode == 'KEY_BACKSPACE':

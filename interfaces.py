@@ -91,8 +91,8 @@ class AppBase:
                 words = segment['text'].split(' ')
                 
                 for word_idx, word in enumerate(words):
-                    if not word:  # Skip empty words from consecutive spaces
-                        continue
+                    # if not word:  # Skip empty words from consecutive spaces
+                    #     continue
                     
                     # Determine if we need a space before this word
                     needs_space = False
