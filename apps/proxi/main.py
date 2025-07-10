@@ -38,21 +38,23 @@ class App(AppBase):
 
     def start(self):
         print("[Proxi] Started")
-        self.display_queue.put(("set_screen", "Ready", "Waiting for input..."))
+        # Enable cursor positioning for this app
+        self._update_cursor_position = True
+        self.set_screen("Ready", "Ready for input! Press [TAB] to autocomplete and [ESC] to return to launcher.")
 
     def update(self):
         pass
     
     def onkeyup(self, keycode):
         if keycode == 'KEY_ESC':
-            self.display_queue.put(("set_screen", "Launcher", "Switching to Launcher..."))
+            self.set_screen("Launcher", "Switching to Launcher...")
             self.context["app_manager"].swap_app_async("proxi", "launcher", update_rate_hz=20.0, delay=0.1)
         
         if keycode == 'KEY_TAB':
             suggestion = self.get_autocomplete_suggestion(self.currentline)
             if suggestion:
-                self.currentline += suggestion
-            self.display_queue.put(("set_screen", "Input", self.currentline))
+                self.currentline += suggestion + ' '
+            self.set_screen("Input", self.currentline)
             return
 
         char = key_map.get(keycode, None)
@@ -65,19 +67,20 @@ class App(AppBase):
             cached_path = os.path.join(self.context["CACHE_DIR"], self.context["hash_text"](old_line) + ".raw")
             if os.path.exists(cached_path):
                 self.currentline = ""
-                self.display_queue.put(("set_screen", "Ready", "Waiting for input..."))
+                self.set_screen("Ready", "Text spoken! Ready for [new input]...")
             else:
-                self.display_queue.put(("set_screen", "Input", old_line))
+                self.set_screen("Input", old_line)
         elif keycode == 'KEY_BACKSPACE':
             self.currentline = self.currentline[:-1]
-            self.display_queue.put(("set_screen", "Input", self.currentline))
+            self.set_screen("Input", self.currentline)
         else:
             self.currentline += char
             suggestion = self.get_autocomplete_suggestion(self.currentline)
             if not suggestion:
-                self.display_queue.put(("set_screen", "Input", self.currentline))
+                self.set_screen("Input", self.currentline)
             else:
-                self.display_queue.put(("set_screen", "Input", self.currentline + "|" + suggestion))
+                # Create custom display with suggestion background
+                self.set_screen("Input", self.currentline + f"[{suggestion}]")
     
     def stop(self):
         print("[Proxi] Stopped")

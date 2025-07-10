@@ -819,9 +819,6 @@ def display_thread_func():
             if cmd:
                 # print(f"[Display] Command received: {cmd}", flush=True)
                 match cmd[0]:
-                    case "set_screen":
-                        _, title, text = cmd
-                        display_set_screen(title, text)
                     case "draw_base_text":
                         _, font, text, x, y = cmd
                         display_draw_text(base_draw, font, text, x, y)

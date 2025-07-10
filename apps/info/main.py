@@ -10,14 +10,14 @@ class App(AppBase):
 
     def start(self):
         print("[Info] Started")
-        self.display_queue.put(("set_screen", "Info", "This is the Info app."))
+        self.set_screen("Info", "This is the Info app.")
         time.sleep(2)
-        self.display_queue.put(("set_screen", "Info", "ProxiTalk was created by Pidge!"))
+        self.set_screen("Info", "ProxiTalk was created by Pidge!")
         time.sleep(2)
-        self.display_queue.put(("set_screen", "Info", "Thanks to lilian and the gardeners for inspiring it!"))
+        self.set_screen("Info", "Thanks to lilian and the gardeners for inspiring it!")
         time.sleep(2)
         # unload the Info app and switch to the Launcher app
-        self.display_queue.put(("set_screen", "Info", "Switching to Launcher..."))
+        self.set_screen("Info", "Switching to Launcher...")
         # Allow time for the message to be displayed
         time.sleep(2)
         
@@ -35,5 +35,5 @@ class App(AppBase):
         pass
     
     def stop(self):
-        self.display_queue.put(("set_screen", "Info", "App stopped"))
+        self.set_screen("Info", "App stopped")
         print("[Info] Stopped")

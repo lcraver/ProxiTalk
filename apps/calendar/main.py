@@ -409,7 +409,7 @@ class App(AppBase):
                 self.context["app_manager"].reload_app("calendar")
         # switch to the launcher if 'Esc' is pressed
         elif keycode == "KEY_ESC":
-            self.display_queue.put(("set_screen", "Launcher", "Switching to Launcher..."))
+            self.set_screen("Launcher", "Switching to Launcher...")
             self.context["app_manager"].swap_app_async("clock", "launcher", update_rate_hz=20.0, delay=0.1)
             
     def save_events(self):
