@@ -7,6 +7,10 @@ import urllib.parse
 import json
 import http.cookiejar
 import datetime
+import re
+import requests
+from PIL import Image
+import io
 
 class App(AppBase):
     def __init__(self, context):
@@ -206,23 +210,7 @@ class App(AppBase):
             "Hey everyone! How's it going?",
             "Just finished working on the new feature",
             "Anyone want to grab coffee later?",
-            "The weather is amazing today!",
-            "I found a great tutorial on Python decorators",
-            "Weekend plans anyone?",
-            "This chat app is working great!",
-            "Does anyone know a good restaurant nearby?",
-            "I'm debugging some tricky code right now",
-            "Happy Friday everyone! 🎉",
-            "Check out this cool project I found",
-            "The scrolling feature is working nicely",
-            "Who's joining the meeting later?",
-            "I love how responsive this interface is",
-            "Just deployed the latest updates",
-            "Time for lunch break!",
-            "The message sorting looks perfect now",
-            "Anyone tried the new API endpoints?",
-            "Great work on the session caching!",
-            "This debug mode is really helpful"
+            "https://vitamin.games/_astro/screenshot%20(3).Cx9jCDKx_uHIVb.webp",
         ]
         
         messages = []
@@ -239,6 +227,9 @@ class App(AppBase):
                 'content': random.choice(test_messages),
                 'time': msg_time.strftime('%H:%M')
             }
+            
+            # Process message for images
+            message = self.process_message_with_images(message)
             
             print(f"[Discourse Chat] Generated message: {message['username']} at {message['time']}: {message['content']}")
             messages.append(message)
@@ -498,12 +489,16 @@ class App(AppBase):
                             if sort_datetime is None:
                                 sort_datetime = datetime.datetime.min
                             
-                            messages.append({
+                            message = {
                                 'username': username,
                                 'content': content,
                                 'time': time_str,
                                 'sort_datetime': sort_datetime
-                            })
+                            }
+                            
+                            # Process message for images
+                            message = self.process_message_with_images(message)
+                            messages.append(message)
                         
                         # Sort messages by datetime to ensure chronological order (oldest first)
                         messages.sort(key=lambda x: x['sort_datetime'])
@@ -689,8 +684,8 @@ class App(AppBase):
         line_height = 5
         
         # Draw title bar
-        title = "Discourse Chat - Blanket Fort"
-        self.display_queue.put(("draw_base_text", font, title, 2, 1, 255))
+        # title = "Discourse Chat - Blanket Fort"
+        # self.display_queue.put(("draw_base_text", font, title, 2, 1, 255))
         
         # Draw loading spinner in top right if loading
         if self.loading:
@@ -700,8 +695,8 @@ class App(AppBase):
             spinner_x = self.width - 12  # Position in top right
             self.display_queue.put(("draw_base_text", font, f"[{spinner_char}]", spinner_x, 1, 255))
         
-        # Draw separator line
-        self.display_queue.put(("draw_base_text", font, "-" * 20, 2, 6, 255))
+        # # Draw separator line
+        # self.display_queue.put(("draw_base_text", font, "-" * 20, 2, 6, 255))
         
         if self.error_message and not self.loading:
             # Show error message only when not loading
@@ -752,7 +747,7 @@ class App(AppBase):
         line_height = 5
         
         # Calculate message area boundaries
-        top_y = 10  # Start after title and separator
+        top_y = 2  # Start after title and separator
         # Reserve space for input area at bottom
         input_area_reserve = 15  # Reserve enough space for input area
         bottom_y = self.height - input_area_reserve
@@ -800,6 +795,14 @@ class App(AppBase):
             # Calculate total height needed for this message
             message_height = (len(username_lines) + len(content_lines) + 1) * line_height  # +1 for gap
             
+            # Add height for images if any
+            if 'images' in message and message['images']:
+                for img_data in message['images']:
+                    if 'image' in img_data:
+                        message_height += img_data['height'] + 2  # +2 for gap after image
+                    else:
+                        message_height += line_height  # For "[Image]" placeholder
+            
             # # Check if we have room for this message
             # if current_height + message_height > available_height:
             #     break  # Can't fit any more messages
@@ -837,6 +840,46 @@ class App(AppBase):
                 if y_pos < bottom_y:  # Make sure we don't draw into input area
                     self.display_queue.put(("draw_base_text", font, f" {content_line}", 2, y_pos))
                     y_pos += line_height
+            
+            # Draw images if any are available
+            message = msg_data['message']
+            if 'images' in message and message['images']:
+                for img_data in message['images']:
+                    if y_pos < bottom_y and self.has_image_data(img_data):
+                        # Get the current image to display
+                        current_image = self.get_current_image(img_data)
+                        img_width = img_data['width']
+                        img_height = img_data['height']
+                        
+                        # Center the image horizontally
+                        x_offset = (self.width - img_width) // 2
+                        
+                        # Make sure image fits in available space (allow some overlap with input area if needed)
+                        max_image_height = min(img_height, bottom_y - y_pos - 5)  # Leave at least 5px buffer
+                        if max_image_height > 10:  # Only draw if we have reasonable space
+                            # Scale image down if needed to fit available space
+                            if img_height > max_image_height:
+                                # Scale the image to fit
+                                scale_factor = max_image_height / img_height
+                                new_width = int(img_width * scale_factor)
+                                new_height = int(max_image_height)
+                                
+                                # Resize the PIL image
+                                scaled_image = current_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                                
+                                # Re-center horizontally
+                                x_offset = (self.width - new_width) // 2
+                                self.display_queue.put(("draw_base_image", scaled_image, x_offset, y_pos))
+                                y_pos += new_height + 2
+                            else:
+                                # Image fits as-is
+                                self.display_queue.put(("draw_base_image", current_image, x_offset, y_pos))
+                                y_pos += img_height + 2  # Add small gap after image
+                        else:
+                            # Not enough space for image, show placeholder
+                            self.display_queue.put(("draw_base_text", font, " [Image]", 2, y_pos))
+                            y_pos += line_height
+                            y_pos += line_height
             
             # Add gap between messages
             if y_pos < bottom_y:
@@ -1156,3 +1199,203 @@ class App(AppBase):
     def stop(self):
         """Clean up when app stops"""
         print("[Discourse Chat] Stopped")
+    
+    def is_image_url(self, url):
+        """Check if a URL points to an image"""
+        image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
+        try:
+            # Parse the URL and check extension
+            parsed = urllib.parse.urlparse(url.lower())
+            path = parsed.path
+            return any(path.endswith(ext) for ext in image_extensions)
+        except:
+            return False
+    
+    def extract_image_urls(self, text):
+        """Extract image URLs from message text"""
+        # Pattern to match URLs
+        url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+\.(jpg|jpeg|png|gif|bmp|webp)(?:\?[^\s]*)?'
+        urls = re.findall(url_pattern, text, re.IGNORECASE)
+        # Return the full URLs (re.findall returns tuples with groups, so we need to reconstruct)
+        image_urls = []
+        for match in re.finditer(url_pattern, text, re.IGNORECASE):
+            image_urls.append(match.group(0))
+        return image_urls
+    
+    def download_and_process_image(self, url, max_width=120, max_height=40):
+        """Download and process an image for display, with GIF animation support"""
+        try:
+            # Download image with timeout
+            response = requests.get(url, timeout=5, headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            })
+            response.raise_for_status()
+            
+            # Load image from bytes
+            image_data = io.BytesIO(response.content)
+            image = Image.open(image_data)
+            
+            # Check if this is an animated GIF
+            is_animated = hasattr(image, 'is_animated') and image.is_animated
+            
+            if is_animated:
+                print(f"[Discourse Chat] Processing animated GIF with {image.n_frames} frames")
+                return self.process_animated_gif(image, max_width, max_height)
+            else:
+                # Process static image
+                return self.process_static_image(image, max_width, max_height)
+            
+        except Exception as e:
+            print(f"[Discourse Chat] Failed to download image {url}: {e}")
+            return None
+    
+    def process_static_image(self, image, max_width, max_height):
+        """Process a static image"""
+        # Convert to RGB if necessary
+        if image.mode != 'RGB':
+            image = image.convert('RGB')
+        
+        # Calculate scaling to fit within max dimensions
+        img_width, img_height = image.size
+        scale_x = max_width / img_width
+        scale_y = max_height / img_height
+        scale = min(scale_x, scale_y, 1.0)  # Don't upscale
+        
+        new_width = int(img_width * scale)
+        new_height = int(img_height * scale)
+        
+        # Resize image
+        resized_image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        
+        # Convert to 1-bit (monochrome) for the display system
+        gray_image = resized_image.convert('L')
+        mono_image = gray_image.convert('1', dither=Image.Dither.FLOYDSTEINBERG)
+        
+        return {
+            'type': 'static',
+            'image': mono_image,
+            'width': new_width,
+            'height': new_height
+        }
+    
+    def process_animated_gif(self, gif_image, max_width, max_height):
+        """Process an animated GIF into frames"""
+        frames = []
+        durations = []
+        
+        # Calculate scaling once for all frames
+        img_width, img_height = gif_image.size
+        scale_x = max_width / img_width
+        scale_y = max_height / img_height
+        scale = min(scale_x, scale_y, 1.0)  # Don't upscale
+        
+        new_width = int(img_width * scale)
+        new_height = int(img_height * scale)
+        
+        try:
+            for frame_num in range(gif_image.n_frames):
+                gif_image.seek(frame_num)
+                
+                # Get frame duration (in milliseconds)
+                duration = gif_image.info.get('duration', 100)  # Default 100ms if not specified
+                durations.append(max(duration, 50))  # Minimum 50ms per frame to avoid too fast animation
+                
+                # Convert frame to RGB
+                frame = gif_image.convert('RGB')
+                
+                # Resize frame
+                resized_frame = frame.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                
+                # Convert to 1-bit (monochrome) for the display system
+                gray_frame = resized_frame.convert('L')
+                mono_frame = gray_frame.convert('1', dither=Image.Dither.FLOYDSTEINBERG)
+                
+                frames.append(mono_frame)
+                
+        except Exception as e:
+            print(f"[Discourse Chat] Error processing GIF frames: {e}")
+            # Fall back to first frame as static image
+            gif_image.seek(0)
+            return self.process_static_image(gif_image, max_width, max_height)
+        
+        print(f"[Discourse Chat] Processed {len(frames)} frames from animated GIF")
+        
+        return {
+            'type': 'animated',
+            'frames': frames,
+            'durations': durations,
+            'width': new_width,
+            'height': new_height,
+            'current_frame': 0,
+            'last_frame_time': time.time()
+        }
+
+    def has_image_data(self, img_data):
+        """Check if image data contains displayable image"""
+        if img_data['type'] == 'static':
+            return 'image' in img_data
+        elif img_data['type'] == 'animated':
+            return 'frames' in img_data and len(img_data['frames']) > 0
+        return False
+    
+    def get_current_image(self, img_data):
+        """Get the current image to display (handles animation)"""
+        if img_data['type'] == 'static':
+            return img_data['image']
+        elif img_data['type'] == 'animated':
+            return self.update_animation_frame(img_data)
+        return None
+    
+    def update_animation_frame(self, img_data):
+        """Update animation frame and return current frame"""
+        current_time = time.time()
+        
+        # Check if it's time to advance to the next frame
+        frame_duration = img_data['durations'][img_data['current_frame']] / 1000.0  # Convert ms to seconds
+        
+        if current_time - img_data['last_frame_time'] >= frame_duration:
+            # Advance to next frame
+            img_data['current_frame'] = (img_data['current_frame'] + 1) % len(img_data['frames'])
+            img_data['last_frame_time'] = current_time
+        
+        return img_data['frames'][img_data['current_frame']]
+
+    def process_message_with_images(self, message):
+        """Process a message and detect/download any images"""
+        content = message['content']
+        image_urls = self.extract_image_urls(content)
+        
+        # Remove image URLs from the displayed content
+        display_content = content
+        for url in image_urls:
+            # Remove the URL from the display content
+            display_content = display_content.replace(url, '').strip()
+        
+        # Clean up any extra whitespace or empty lines
+        display_content = ' '.join(display_content.split())
+        
+        # Update the message content for display (keep original for reference)
+        message['original_content'] = content  # Store original content
+        message['content'] = display_content if display_content else "[Image]"  # Use cleaned content for display
+        
+        # Add image data to message if images found
+        if image_urls:
+            message['images'] = []
+            for url in image_urls:
+                print(f"[Discourse Chat] Found image URL: {url}")
+                # Download image in a separate thread to avoid blocking
+                def download_image(url, msg):
+                    img_data = self.download_and_process_image(url)
+                    if img_data:
+                        img_data['url'] = url
+                        msg['images'].append(img_data)
+                        print(f"[Discourse Chat] Downloaded and processed image: {url}")
+                        # Trigger display refresh
+                        self.refresh_display()
+                
+                # Start download in background
+                thread = threading.Thread(target=download_image, args=(url, message))
+                thread.daemon = True
+                thread.start()
+        
+        return message
