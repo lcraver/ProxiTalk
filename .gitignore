@@ -183,3 +183,8 @@ cython_debug/
 piper_cache/*.*
 piper_cache
 config/user_preferences.json
+config/discourse_login.conf
+
+# Discourse chat session cache files (contain authentication tokens)
+apps/discourse_chat/session_cache.json
+**/session_cache.json
