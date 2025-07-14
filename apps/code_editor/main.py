@@ -289,9 +289,8 @@ class App(AppBase):
                 display_text = f"{item['name']}"
             
             # Truncate long names
-            if len(display_text) > 15:
-                display_text = display_text[:12] + "..."
-            
+            if len(display_text) > 30:
+                display_text = display_text[:27] + "..."
             # Draw selected item with inverted text
             if i == self.browser_selection:
                 self.draw_inverted_text(font, display_text, 2, y_pos)
@@ -689,13 +688,17 @@ class App(AppBase):
         char_width = 3
         visible_chars = content_width // char_width
         
+        # Start scrolling sooner by reducing effective visible area
+        scroll_margin = 5  # Start scrolling when 5 characters from edge
+        effective_visible_chars = max(10, visible_chars - (scroll_margin * 2))
+        
         # Adjust horizontal scroll to keep cursor visible
-        if self.cursor_col < self.horizontal_scroll:
-            # Cursor is to the left of visible area
-            self.horizontal_scroll = max(0, self.cursor_col - 2)  # Add small margin
-        elif self.cursor_col >= self.horizontal_scroll + visible_chars:
-            # Cursor is to the right of visible area
-            self.horizontal_scroll = self.cursor_col - visible_chars + 3  # Add small margin
+        if self.cursor_col < self.horizontal_scroll + scroll_margin:
+            # Cursor is getting close to the left edge
+            self.horizontal_scroll = max(0, self.cursor_col - scroll_margin)
+        elif self.cursor_col >= self.horizontal_scroll + effective_visible_chars:
+            # Cursor is getting close to the right edge
+            self.horizontal_scroll = self.cursor_col - effective_visible_chars + scroll_margin
     
     def insert_text(self, text):
         """Insert text at cursor position"""
