@@ -20,10 +20,10 @@ I2C_PORT = 1        # I2C port (usually 1 on Raspberry Pi)
 I2C_ADDRESS = 0x3C  # Common I2C address for SSD1306 displays
 
 if IS_WINDOWS:
-    from config.emulator.paths import PIPER_BIN, MODEL_PATH, CACHE_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH
+    from config.emulator.paths import PIPER_BIN, MODEL_PATH, CACHE_DIR, CONFIG_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH
     from config.emulator.paths import FONT_PATH, FONT_SMALL_PATH, FONT_BOLD_PATH
 else:
-    from config.paths import PIPER_BIN, MODEL_PATH, CACHE_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH
+    from config.paths import PIPER_BIN, MODEL_PATH, CACHE_DIR, CONFIG_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH
     from config.paths import FONT_PATH, FONT_SMALL_PATH, FONT_BOLD_PATH
     
 # -- Emulator Setup --- #
@@ -707,9 +707,9 @@ def display_set_screen(title, text):
         # Force immediate update for screen changes to prevent black screens
         update_display(force=True)
 
-def display_draw_text(layer, font, text, x=0, y=0):
+def display_draw_text(layer, font, text, x=0, y=0, fill=255):
     with draw_lock:
-        layer.text((x, y), text, font=font, fill=255)
+        layer.text((x, y), text, font=font, fill=fill)
         mark_display_dirty()
 
 def display_draw_icon(layer, icon_img, x=0, y=height - 8):
@@ -720,10 +720,10 @@ def display_draw_icon(layer, icon_img, x=0, y=height - 8):
         if icon_img:
             layer.paste(icon_img, (x, y), icon_img)
         mark_display_dirty()
-
-def display_clear_area(layer, x=0, y=0, width=128, height=64):
+        
+def display_draw_area(layer, x=0, y=0, width=128, height=64, fill=255):
     with draw_lock:
-        layer.rectangle((x, y, x + width, y + height), fill=0)
+        layer.rectangle((x, y, x + width, y + height), fill=fill)
         mark_display_dirty()
 
 def display_draw_blinking_cursor(x, y, isOn):
@@ -821,11 +821,19 @@ def display_thread_func():
                 # print(f"[Display] Command received: {cmd}", flush=True)
                 match cmd[0]:
                     case "draw_base_text":
-                        _, font, text, x, y = cmd
-                        display_draw_text(base_draw, font, text, x, y)
+                        if len(cmd) == 6:
+                            _, font, text, x, y, fill = cmd
+                        else:
+                            _, font, text, x, y = cmd
+                            fill = 255  # Default fill color
+                        display_draw_text(base_draw, font, text, x, y, fill=fill)
                     case "draw_overlay_text":
-                        _, font, text, x, y = cmd
-                        display_draw_text(overlay_draw, font, text, x, y)
+                        if len(cmd) == 6:
+                            _, font, text, x, y, fill = cmd
+                        else:
+                            _, font, text, x, y = cmd
+                            fill = 255  # Default fill color
+                        display_draw_text(overlay_draw, font, text, x, y, fill=fill)
                     case "draw_base_image":
                         _, img, x, y = cmd
                         display_draw_icon(base_layer, img, x, y)
@@ -833,19 +841,23 @@ def display_thread_func():
                         _, img, x, y = cmd
                         display_draw_icon(overlay_layer, img, x, y)
                     case "clear_base":
-                        display_clear_area(base_draw, 0, 0, 128, 64)
-                        # Force immediate update for full screen clears
+                        display_draw_area(base_draw, 0, 0, 128, 64, fill=0)
                         update_display(force=True)
                     case "clear_base_2":
-                        display_clear_area(base_draw_2, 0, 0, 128, 64)
-                        # Force immediate update for cursor layer clears
+                        display_draw_area(base_draw_2, 0, 0, 128, 64, fill=0)
                         update_display(force=True)
                     case "clear_base_area":
                         _, x, y, width, height = cmd
-                        display_clear_area(base_draw, x, y, width, height)
+                        display_draw_area(base_draw, x, y, width, height, fill=0)
+                    case "draw_base_area":
+                        _, x, y, width, height, fill = cmd
+                        display_draw_area(base_draw, x, y, width, height, fill=fill)
+                    case "draw_overlay_area":
+                        _, x, y, width, height, fill = cmd
+                        display_draw_area(overlay_draw, x, y, width, height, fill=fill)
                     case "clear_overlay_area":
                         _, x, y, width, height = cmd
-                        display_clear_area(overlay_draw, x, y, width, height)
+                        display_draw_area(overlay_draw, x, y, width, height, fill=0)
                     case "draw_cursor":
                         _, x, y, isOn = cmd
                         display_draw_blinking_cursor(x, y, isOn)
@@ -1164,9 +1176,15 @@ def main():
         "hash_text": hash_text,
         "FONT_PATH": FONT_PATH,
         "CACHE_DIR": CACHE_DIR,
+        "CONFIG_DIR": CONFIG_DIR,
         "APPS_DIR": APPS_DIR,
         "AUTOCOMPLETE_PATH": AUTOCOMPLETE_PATH,
     }
+    
+    # Initialize user preferences
+    from config.user_preferences import initialize_preferences
+    user_prefs = initialize_preferences(CONFIG_DIR)
+    context["user_preferences"] = user_prefs
     
     # Create and use the reusable AppManager
     from app_manager import AppManager

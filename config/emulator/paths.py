@@ -1,6 +1,7 @@
 PIPER_BIN = "C:\\Users\\Pidge\\Documents\\ProxiTalk\\piper\\piper.exe"
 MODEL_PATH = "C:\\Users\\Pidge\\Documents\\ProxiTalk\\piper\\en_GB-cori-medium.onnx"
 CACHE_DIR = "C:\\Users\\Pidge\\Documents\\ProxiTalk\\piper_cache"
+CONFIG_DIR = "C:\\Users\\Pidge\\Documents\\ProxiTalk\\config"
 APPS_DIR = "C:\\Users\\Pidge\\Documents\\ProxiTalk\\apps"
 ICON_DIR = "C:\\Users\\Pidge\\Documents\\ProxiTalk\\assets\\icons"
 FONT_PATH = "C:\\Users\\Pidge\\Documents\\ProxiTalk\\assets\\DejaVuSans.ttf"

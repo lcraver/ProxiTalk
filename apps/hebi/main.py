@@ -209,6 +209,11 @@ class App(AppBase):
                 
         # Global controls
         if keycode == "KEY_ESC":
+            # Save this app as last launched when returning to launcher
+            user_prefs = self.context.get("user_preferences")
+            if user_prefs:
+                user_prefs.set_last_launched_app("hebi")
+                
             self.display_queue.put(("set_screen", "Launcher", "Returning to launcher..."))
             self.context["app_manager"].swap_app_async("hebi", "launcher", update_rate_hz=20.0, delay=0.1)
             

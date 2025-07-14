@@ -9,12 +9,24 @@ class App(AppBase):
         self.selection = 0
         self.app_count = 0
         self.valid_apps = []
+        self.user_prefs = context.get("user_preferences")
 
     def start(self):
         print("[Launcher] Started")
         
+        # Load last selection from preferences if available
+        if self.user_prefs:
+            last_app_name = self.user_prefs.get_last_launched_app()
+            if last_app_name:
+                # Find the index of the last launched app
+                valid_apps = self.get_valid_apps()
+                for i, app in enumerate(valid_apps):
+                    if app['name'] == last_app_name:
+                        self.selection = i
+                        print(f"[Launcher] Auto-selected last app: {last_app_name} (index {i})")
+                        break
+        
         x = 1
-        self.selection = 0
         self.drawAllApps()
         
     def drawAllApps(self):
@@ -80,6 +92,11 @@ class App(AppBase):
                 selected_app = self.get_selected_app()
                 if selected_app:
                     name = selected_app['name']
+                    # Save the launched app to preferences
+                    if self.user_prefs:
+                        self.user_prefs.set_last_launched_app(name)
+                        print(f"[Launcher] Saved last launched app: {name}")
+                    
                     self.context["app_manager"].swap_app_async(
                         "launcher", name, update_rate_hz=20.0, delay=0.1
                     )

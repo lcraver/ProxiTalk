@@ -410,7 +410,7 @@ class App(AppBase):
         # switch to the launcher if 'Esc' is pressed
         elif keycode == "KEY_ESC":
             self.set_screen("Launcher", "Switching to Launcher...")
-            self.context["app_manager"].swap_app_async("clock", "launcher", update_rate_hz=20.0, delay=0.1)
+            self.context["app_manager"].swap_app_async("calendar", "launcher", update_rate_hz=20.0, delay=0.1)
             
     def save_events(self):
         """Save events back to the JSON file"""

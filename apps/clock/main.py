@@ -22,7 +22,8 @@ class App(AppBase):
         self.input_mode = None  # "minutes" or "seconds" when setting timer
 
     def start(self):
-        pass
+        self.display_queue.put(("clear_base",))
+        self.update_clock()
 
     def update(self):
         self.t += 1

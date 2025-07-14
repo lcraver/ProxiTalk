@@ -20,6 +20,8 @@ class AppManager:
         self.app_threads: Dict[str, threading.Thread] = {}
         self.running_apps: Dict[str, bool] = {}
         self.app_cursor_preferences: Dict[str, bool] = {}  # Track cursor preferences per app
+        self.active_app: Optional[str] = None  # Track the currently active non-overlay app
+        self.overlay_apps: set = set()  # Track which apps are overlays
         self._stop_all = False
         
     def load_app_instance(self, app_name: str) -> Optional[AppBase]:
@@ -59,6 +61,7 @@ class AppManager:
                 app_instance = self.load_app_instance(app["name"])
                 if app_instance:
                     self.loaded_apps[app["name"]] = app_instance
+                    self.overlay_apps.add(app["name"])  # Track as overlay
                     loaded_count += 1
                     print(f"[AppManager] Loaded overlay: {app['name']}")
         return loaded_count
@@ -90,6 +93,11 @@ class AppManager:
         
         app_instance = self.loaded_apps[app_name]
         self.running_apps[app_name] = True
+        
+        # Set as active app if it's not an overlay
+        if app_name not in self.overlay_apps:
+            self.active_app = app_name
+            print(f"[AppManager] Set active app: {app_name}")
         
         def app_loop():
             try:
@@ -124,6 +132,11 @@ class AppManager:
     def stop_app(self, app_name: str, timeout: float = 5.0) -> bool:
         """Stop a running application."""
         if app_name not in self.running_apps:
+            print(f"[AppManager] App '{app_name}' was not in running_apps dict")
+            return True
+            
+        if not self.running_apps[app_name]:
+            print(f"[AppManager] App '{app_name}' was already marked as not running")
             return True
             
         print(f"[AppManager] Stopping app: {app_name}")
@@ -132,8 +145,14 @@ class AppManager:
         # Clear cursor when stopping an app
         self.clear_cursor()
         
+        # Clear active app if this is the one being stopped
+        if self.active_app == app_name:
+            print(f"[AppManager] Clearing active app during stop: {app_name}")
+            self.active_app = None
+        
         if app_name in self.app_threads:
             thread = self.app_threads[app_name]
+            print(f"[AppManager] Waiting for thread {app_name} to stop...")
             thread.join(timeout=timeout)
             
             if thread.is_alive():
@@ -141,6 +160,9 @@ class AppManager:
                 return False
             else:
                 del self.app_threads[app_name]
+                print(f"[AppManager] Thread for '{app_name}' stopped successfully")
+        else:
+            print(f"[AppManager] No thread found for app '{app_name}'")
         
         return True
     
@@ -183,8 +205,25 @@ class AppManager:
         return [name for name, running in self.running_apps.items() if running]
     
     def distribute_event(self, event_name: str, *args, **kwargs) -> None:
-        """Distribute an event to all loaded applications that have the event handler."""
-        for app_name, app_instance in list(self.loaded_apps.items()):
+        """Distribute an event to the active app and all overlay applications."""
+        # Only send events to:
+        # 1. The currently active (non-overlay) app
+        # 2. All overlay apps (which should always receive events)
+        
+        apps_to_notify = []
+        
+        # Add active app if it exists and is loaded
+        if self.active_app and self.active_app in self.loaded_apps:
+            apps_to_notify.append(self.active_app)
+        
+        # Add all overlay apps
+        for overlay_name in self.overlay_apps:
+            if overlay_name in self.loaded_apps:
+                apps_to_notify.append(overlay_name)
+        
+        # Send events to selected apps
+        for app_name in apps_to_notify:
+            app_instance = self.loaded_apps[app_name]
             if hasattr(app_instance, event_name):
                 try:
                     handler = getattr(app_instance, event_name)
@@ -193,6 +232,29 @@ class AppManager:
                     print(f"[AppManager] Error in {app_name}.{event_name}: {e}")
                     traceback.print_exc()
     
+    def get_event_receiving_apps(self) -> List[str]:
+        """Get list of apps that would receive events (for debugging)."""
+        apps_to_notify = []
+        
+        # Add active app if it exists and is loaded
+        if self.active_app and self.active_app in self.loaded_apps:
+            apps_to_notify.append(f"{self.active_app} (active)")
+        
+        # Add all overlay apps
+        for overlay_name in self.overlay_apps:
+            if overlay_name in self.loaded_apps:
+                apps_to_notify.append(f"{overlay_name} (overlay)")
+        
+        return apps_to_notify
+    
+    def debug_app_state(self):
+        """Print current app state for debugging."""
+        print(f"[AppManager Debug] Active app: {self.active_app}")
+        print(f"[AppManager Debug] Loaded apps: {list(self.loaded_apps.keys())}")
+        print(f"[AppManager Debug] Overlay apps: {list(self.overlay_apps)}")
+        print(f"[AppManager Debug] Running apps: {[name for name, running in self.running_apps.items() if running]}")
+        print(f"[AppManager Debug] Apps receiving events: {self.get_event_receiving_apps()}")
+
     def get_app_instance(self, app_name: str) -> Optional[AppBase]:
         """Get a loaded app instance by name."""
         return self.loaded_apps.get(app_name)
@@ -238,6 +300,9 @@ class AppManager:
             bool: True if swap was successful, False otherwise
         """
         print(f"[AppManager] Swapping from '{from_app}' to '{to_app}'")
+        
+        # Debug: Show current state before swap
+        print(f"[AppManager] Before swap - Active: {self.active_app}, Loaded: {list(self.loaded_apps.keys())}")
 
         # Ensure the target app is loaded first
         if not self.load_app(to_app):
@@ -246,9 +311,17 @@ class AppManager:
 
         # Stop and unload the source app
         if self.is_app_running(from_app):
+            print(f"[AppManager] Stopping running app: {from_app}")
             if not self.stop_app(from_app):
                 print(f"[AppManager] Failed to stop source app: {from_app}")
                 return False
+        else:
+            print(f"[AppManager] App {from_app} was not running")
+
+        # Clear active app if we're swapping away from it
+        if self.active_app == from_app:
+            print(f"[AppManager] Clearing active app: {from_app}")
+            self.active_app = None
 
         # Ensure cursor is completely cleared between apps
         self.clear_cursor()
@@ -256,13 +329,20 @@ class AppManager:
         if "display_queue" in self.context:
             self.context["display_queue"].put(("clear_base_2",))
 
+        # Unload the source app
         if from_app in self.loaded_apps:
             del self.loaded_apps[from_app]
             print(f"[AppManager] Unloaded app: {from_app}")
+        else:
+            print(f"[AppManager] App {from_app} was not loaded")
 
-        # Start the target app
+        # Debug: Show state after cleanup
+        print(f"[AppManager] After cleanup - Active: {self.active_app}, Loaded: {list(self.loaded_apps.keys())}")
+
+        # Start the target app (this will set it as active)
         if self.start_app(to_app, update_rate_hz):
             print(f"[AppManager] Successfully swapped from '{from_app}' to '{to_app}'")
+            print(f"[AppManager] Final state - Active: {self.active_app}, Loaded: {list(self.loaded_apps.keys())}")
             return True
         else:
             print(f"[AppManager] Failed to start target app: {to_app}")
