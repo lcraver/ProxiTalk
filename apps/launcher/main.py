@@ -146,28 +146,14 @@ class App(AppBase):
             self.update_page_if_needed(old_selection)
             self.drawAllApps()
         elif keycode == "KEY_UP" or keycode == "KEY_W":
-            # Page up
-            if self.current_page > 0:
-                self.current_page -= 1
-                # Move selection to same relative position on previous page
-                page_position = self.selection % self.apps_per_page
-                self.selection = self.current_page * self.apps_per_page + min(page_position, self.get_apps_on_page(self.current_page) - 1)
-                self.drawAllApps()
+            self.navigate_up()
         elif keycode == "KEY_DOWN" or keycode == "KEY_S":
-            # Page down
-            if self.current_page < self.total_pages - 1:
-                self.current_page += 1
-                # Move selection to same relative position on next page
-                page_position = self.selection % self.apps_per_page
-                self.selection = self.current_page * self.apps_per_page + min(page_position, self.get_apps_on_page(self.current_page) - 1)
-                self.drawAllApps()
+            self.navigate_down()
         elif keycode == "KEY_ENTER" or keycode == "KEY_SPACE":
             if self.app_count > 0:
-                # Swap to the selected app
                 selected_app = self.get_selected_app()
                 if selected_app:
                     name = selected_app['name']
-                    # Save the launched app to preferences
                     if self.user_prefs:
                         self.user_prefs.set_last_launched_app(name)
                         print(f"[Launcher] Saved last launched app: {name}")
@@ -178,6 +164,109 @@ class App(AppBase):
             else:
                 print("[Launcher] No apps to launch")
     
+    def navigate_up(self):
+        """Navigate up in the grid layout"""
+        if self.app_count == 0:
+            return
+            
+        # Calculate current grid layout
+        cols = self.get_current_page_cols()
+        current_row = (self.selection % self.apps_per_page) // cols
+        current_col = (self.selection % self.apps_per_page) % cols
+        
+        if current_row > 0:
+            # Move up one row in the same page
+            new_selection = self.selection - cols
+            if new_selection >= self.current_page * self.apps_per_page:
+                self.selection = new_selection
+                self.drawAllApps()
+        else:
+            # Move to previous page, bottom row
+            if self.current_page > 0:
+                self.current_page -= 1
+                # Calculate position in previous page
+                prev_page_apps = self.get_apps_on_page(self.current_page)
+                prev_page_cols = self.get_current_page_cols()
+                prev_page_rows = (prev_page_apps + prev_page_cols - 1) // prev_page_cols
+                
+                # Try to position in same column, bottom row
+                target_row = prev_page_rows - 1
+                target_selection = self.current_page * self.apps_per_page + target_row * prev_page_cols + current_col
+                
+                # Make sure we don't go beyond the available apps
+                max_selection = self.current_page * self.apps_per_page + prev_page_apps - 1
+                self.selection = min(target_selection, max_selection)
+                self.drawAllApps()
+    
+    def navigate_down(self):
+        """Navigate down in the grid layout"""
+        if self.app_count == 0:
+            return
+            
+        # Calculate current grid layout
+        cols = self.get_current_page_cols()
+        current_page_apps = self.get_apps_on_page(self.current_page)
+        current_row = (self.selection % self.apps_per_page) // cols
+        current_col = (self.selection % self.apps_per_page) % cols
+        current_page_rows = (current_page_apps + cols - 1) // cols
+        
+        if current_row < current_page_rows - 1:
+            # Move down one row in the same page
+            new_selection = self.selection + cols
+            max_selection = self.current_page * self.apps_per_page + current_page_apps - 1
+            if new_selection <= max_selection:
+                self.selection = new_selection
+                self.drawAllApps()
+            else:
+                # Try to position in the last row, same column if possible
+                last_row_start = self.current_page * self.apps_per_page + (current_page_rows - 1) * cols
+                target_selection = last_row_start + current_col
+                if target_selection <= max_selection:
+                    self.selection = target_selection
+                    self.drawAllApps()
+                else:
+                    # Go to the last available position
+                    self.selection = max_selection
+                    self.drawAllApps()
+        else:
+            # Move to next page, top row
+            if self.current_page < self.total_pages - 1:
+                self.current_page += 1
+                # Position in same column, top row
+                target_selection = self.current_page * self.apps_per_page + current_col
+                
+                # Make sure we don't go beyond the available apps
+                next_page_apps = self.get_apps_on_page(self.current_page)
+                max_selection = self.current_page * self.apps_per_page + next_page_apps - 1
+                self.selection = min(target_selection, max_selection)
+                self.drawAllApps()
+    
+    def get_current_page_cols(self):
+        """Get number of columns for current page layout"""
+        page_apps = self.get_apps_on_page(self.current_page)
+        if page_apps == 0:
+            return 1
+            
+        # Get a reference app to determine icon size
+        all_apps = self.get_valid_apps()
+        if not all_apps:
+            return 1
+            
+        start_index = self.current_page * self.apps_per_page
+        test_app = all_apps[start_index]
+        test_icon = test_app.get("icon_normal") or test_app.get("icon_selected")
+        if not test_icon:
+            return 1
+            
+        icon_w, icon_h = test_icon.size
+        padding = 4
+        dots_width = 0
+        available_width = 128 - dots_width
+        
+        # Calculate maximum possible columns
+        max_cols = max(1, available_width // (icon_w + padding))
+        return min(page_apps, max_cols)
+
     def update_page_if_needed(self, old_selection):
         """Update current page if selection moved to a different page"""
         new_page = self.selection // self.apps_per_page
@@ -192,7 +281,7 @@ class App(AppBase):
                 
     def get_valid_apps(self):
         
-        if self.valid_apps and self.valid_apps.count > 0:
+        if self.valid_apps and len(self.valid_apps) > 0:
             return self.valid_apps
         
         valid_apps = []
@@ -202,6 +291,8 @@ class App(AppBase):
             if app['name'].lower() == "launcher":
                 continue
             valid_apps.append(app)
+        
+        self.valid_apps = valid_apps
         return valid_apps
                 
     def get_selected_app(self):
