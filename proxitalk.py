@@ -21,10 +21,10 @@ I2C_ADDRESS = 0x3C  # Common I2C address for SSD1306 displays
 
 if IS_WINDOWS:
     from config.emulator.paths import PIPER_BIN, MODEL_PATH, CACHE_DIR, CONFIG_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH
-    from config.emulator.paths import FONT_PATH, FONT_SMALL_PATH, FONT_BOLD_PATH
+    from config.emulator.paths import FONT_PATH, FONT_SMALL_PATH, FONT_BOLD_PATH, OVERLAY_DIR
 else:
     from config.paths import PIPER_BIN, MODEL_PATH, CACHE_DIR, CONFIG_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH
-    from config.paths import FONT_PATH, FONT_SMALL_PATH, FONT_BOLD_PATH
+    from config.paths import FONT_PATH, FONT_SMALL_PATH, FONT_BOLD_PATH, OVERLAY_DIR
     
 # -- Emulator Setup --- #
 
@@ -1178,6 +1178,7 @@ def main():
         "CACHE_DIR": CACHE_DIR,
         "CONFIG_DIR": CONFIG_DIR,
         "APPS_DIR": APPS_DIR,
+        "OVERLAY_DIR": OVERLAY_DIR,
         "AUTOCOMPLETE_PATH": AUTOCOMPLETE_PATH,
     }
     
@@ -1188,11 +1189,18 @@ def main():
     
     # Create and use the reusable AppManager
     from app_manager import AppManager
-    app_manager = AppManager(APPS_DIR, context)
-    
+    app_manager = AppManager(APPS_DIR, OVERLAY_DIR, context)
+
     # Load all overlays
     overlay_count = app_manager.load_overlays(apps)
     print(f"[Main] Loaded {overlay_count} overlay apps")
+    
+    # Start all loaded overlays
+    for overlay_name in app_manager.overlay_apps:
+        if app_manager.start_app(overlay_name, update_rate_hz=20.0):
+            print(f"[Main] Started overlay: {overlay_name}")
+        else:
+            print(f"[Main] Failed to start overlay: {overlay_name}")
 
     # Load and start the main launcher app
     if app_manager.load_app("launcher"):

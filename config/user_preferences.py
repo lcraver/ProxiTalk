@@ -31,6 +31,7 @@ class UserPreferences:
             "last_launched_app": None,
             "launcher_selection": 0,
             "hidden_apps": [],
+            "pinned_apps": [],
         }
     
     def _save_preferences(self) -> bool:
@@ -106,6 +107,39 @@ class UserPreferences:
             return self.unhide_app(app_name)
         else:
             return self.hide_app(app_name)
+    
+    def get_pinned_apps(self) -> list:
+        """Get list of pinned apps"""
+        return self._preferences.get("pinned_apps", [])
+    
+    def is_app_pinned(self, app_name: str) -> bool:
+        """Check if an app is pinned"""
+        return app_name in self.get_pinned_apps()
+    
+    def pin_app(self, app_name: str) -> bool:
+        """Pin an app"""
+        pinned_apps = self.get_pinned_apps()
+        if app_name not in pinned_apps:
+            pinned_apps.append(app_name)
+            self._preferences["pinned_apps"] = pinned_apps
+            return self._save_preferences()
+        return True  # Already pinned
+    
+    def unpin_app(self, app_name: str) -> bool:
+        """Unpin an app"""
+        pinned_apps = self.get_pinned_apps()
+        if app_name in pinned_apps:
+            pinned_apps.remove(app_name)
+            self._preferences["pinned_apps"] = pinned_apps
+            return self._save_preferences()
+        return True  # Already unpinned
+    
+    def toggle_app_pinned(self, app_name: str) -> bool:
+        """Toggle app pinned status"""
+        if self.is_app_pinned(app_name):
+            return self.unpin_app(app_name)
+        else:
+            return self.pin_app(app_name)
 
 # Global instance - will be initialized by main app
 user_preferences = None

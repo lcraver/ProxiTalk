@@ -12,9 +12,10 @@ class AppManager:
     A reusable application manager that handles loading, starting, stopping,
     and managing the lifecycle of multiple applications.
     """
-    
-    def __init__(self, apps_dir: str, context: Dict[str, Any]):
+
+    def __init__(self, apps_dir: str, overlay_dir: str, context: Dict[str, Any]):
         self.apps_dir = apps_dir
+        self.overlay_dir = overlay_dir
         self.context = context
         self.loaded_apps: Dict[str, AppBase] = {}
         self.app_threads: Dict[str, threading.Thread] = {}
@@ -54,17 +55,58 @@ class AppManager:
             return None
     
     def load_overlays(self, apps: List[Dict[str, Any]]) -> int:
-        """Load all overlay-type applications."""
+        """Load all overlay-type applications from the overlays directory."""
         loaded_count = 0
-        for app in apps:
-            if app["metadata"].get("type") == "overlay":
-                app_instance = self.load_app_instance(app["name"])
-                if app_instance:
-                    self.loaded_apps[app["name"]] = app_instance
-                    self.overlay_apps.add(app["name"])  # Track as overlay
-                    loaded_count += 1
-                    print(f"[AppManager] Loaded overlay: {app['name']}")
+        
+        # Check if overlay directory exists
+        if not os.path.exists(self.overlay_dir):
+            print(f"[AppManager] Overlay directory not found: {self.overlay_dir}")
+            return 0
+            
+        # Load all apps from overlay directory
+        for overlay_name in os.listdir(self.overlay_dir):
+            overlay_path = os.path.join(self.overlay_dir, overlay_name)
+            if os.path.isdir(overlay_path):
+                main_path = os.path.join(overlay_path, "main.py")
+                if os.path.isfile(main_path):
+                    # Load overlay app instance
+                    app_instance = self.load_overlay_instance(overlay_name)
+                    if app_instance:
+                        self.loaded_apps[overlay_name] = app_instance
+                        self.overlay_apps.add(overlay_name)  # Track as overlay
+                        loaded_count += 1
+                        print(f"[AppManager] Loaded overlay: {overlay_name}")
+                        
         return loaded_count
+    
+    def load_overlay_instance(self, overlay_name: str) -> Optional[AppBase]:
+        """Load a single overlay instance from its main.py file."""
+        try:
+            path = os.path.join(self.overlay_dir, overlay_name, "main.py")
+            if not os.path.isfile(path):
+                print(f"[AppManager] Overlay file not found: {path}")
+                return None
+                
+            spec = importlib.util.spec_from_file_location(f"{overlay_name}.main", path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+
+            if not hasattr(mod, "App"):
+                print(f"[AppManager] No 'App' class found in overlay {overlay_name}")
+                return None
+
+            self.context["app_path"] = os.path.join(self.overlay_dir, overlay_name, "")
+            app_instance = mod.App(self.context)
+            if not isinstance(app_instance, AppBase):
+                print(f"[AppManager] Overlay '{overlay_name}' does not inherit from AppBase")
+                return None
+            
+            return app_instance
+
+        except Exception as e:
+            print(f"[AppManager] Failed to load overlay '{overlay_name}': {e}")
+            traceback.print_exc()
+            return None
     
     def load_app(self, app_name: str) -> bool:
         """Load a single application by name."""
