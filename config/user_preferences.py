@@ -30,8 +30,7 @@ class UserPreferences:
         return {
             "last_launched_app": None,
             "launcher_selection": 0,
-            "created_at": "2025-07-14",
-            "version": "1.0"
+            "hidden_apps": [],
         }
     
     def _save_preferences(self) -> bool:
@@ -73,6 +72,40 @@ class UserPreferences:
         """Set any preference value"""
         self._preferences[key] = value
         return self._save_preferences()
+    
+    def get_hidden_apps(self) -> list:
+        """Get list of hidden app names"""
+        return self._preferences.get("hidden_apps", [])
+    
+    def is_app_hidden(self, app_name: str) -> bool:
+        """Check if an app is hidden"""
+        hidden_apps = self.get_hidden_apps()
+        return app_name in hidden_apps
+    
+    def hide_app(self, app_name: str) -> bool:
+        """Hide an app from the launcher"""
+        hidden_apps = self.get_hidden_apps()
+        if app_name not in hidden_apps:
+            hidden_apps.append(app_name)
+            self._preferences["hidden_apps"] = hidden_apps
+            return self._save_preferences()
+        return True  # Already hidden
+    
+    def unhide_app(self, app_name: str) -> bool:
+        """Unhide an app from the launcher"""
+        hidden_apps = self.get_hidden_apps()
+        if app_name in hidden_apps:
+            hidden_apps.remove(app_name)
+            self._preferences["hidden_apps"] = hidden_apps
+            return self._save_preferences()
+        return True  # Already visible
+    
+    def toggle_app_visibility(self, app_name: str) -> bool:
+        """Toggle app visibility in the launcher"""
+        if self.is_app_hidden(app_name):
+            return self.unhide_app(app_name)
+        else:
+            return self.hide_app(app_name)
 
 # Global instance - will be initialized by main app
 user_preferences = None

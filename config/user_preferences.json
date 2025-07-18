@@ -1,6 +1,7 @@
 {
   "last_launched_app": "tetra",
   "launcher_selection": 0,
+  "hidden_apps": ["info"],
   "created_at": "2025-07-14",
   "version": "1.0"
 }

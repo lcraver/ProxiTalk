@@ -163,7 +163,7 @@ class App(AppBase):
                     )
             else:
                 print("[Launcher] No apps to launch")
-    
+
     def navigate_up(self):
         """Navigate up in the grid layout"""
         if self.app_count == 0:
@@ -285,15 +285,33 @@ class App(AppBase):
             return self.valid_apps
         
         valid_apps = []
+        hidden_apps = []
+        
+        # Get hidden apps list from preferences
+        if self.user_prefs:
+            hidden_apps = self.user_prefs.get_hidden_apps()
+        
         for app in self.context["apps"]["all"]:
             if app['metadata']['type'].lower() == "overlay":
                 continue
             if app['name'].lower() == "launcher":
                 continue
+            
+            # Skip hidden apps
+            if app['name'] in hidden_apps:
+                continue
+                
             valid_apps.append(app)
         
         self.valid_apps = valid_apps
         return valid_apps
+    
+    def refresh_apps(self):
+        """Refresh the apps list (clears cache to reload from preferences)"""
+        self.valid_apps = []
+        self.app_count = 0
+        # Recalculate everything
+        self.drawAllApps()
                 
     def get_selected_app(self):
         valid_apps = self.get_valid_apps()
