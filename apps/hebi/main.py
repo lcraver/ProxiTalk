@@ -28,6 +28,9 @@ class App(AppBase):
         self.move_timer = 0
         self.move_interval = 8  # Move every 10 ticks (0.5 seconds at 20Hz)
         
+        # Performance optimization
+        self.needs_redraw = True
+        
     def reset_game(self):
         """Reset the game to initial state"""
         # hebi starts in the middle, moving right
@@ -41,6 +44,7 @@ class App(AppBase):
         self.score = 0
         self.state = self.PLAYING
         self.move_timer = 0
+        self.needs_redraw = True
         
     def place_food(self):
         """Place food at a random empty position"""
@@ -62,7 +66,15 @@ class App(AppBase):
                 self.move_timer = 0
                 self.move_hebi()
                 if self.state == self.PLAYING:  # Only draw if still playing
-                    self.draw_game()
+                    self.needs_redraw = True
+        
+        # Only redraw when necessary
+        if self.needs_redraw:
+            if self.state == self.PLAYING:
+                self.draw_game()
+            elif self.state == self.GAME_OVER:
+                self.draw_game_over()
+            self.needs_redraw = False
 
     def move_hebi(self):
         """Move the hebi one step"""
@@ -179,6 +191,9 @@ class App(AppBase):
         
     def onkeydown(self, keycode):
         """Handle key press events"""
+        # Mark for redraw on any input
+        self.needs_redraw = True
+        
         if self.state == self.PLAYING:
             # Movement controls
             if keycode == "KEY_UP" or keycode == "KEY_W":

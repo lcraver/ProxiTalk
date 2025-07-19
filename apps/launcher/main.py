@@ -15,6 +15,9 @@ class App(AppBase):
         self.apps_per_page = 8  # Maximum apps to show per page
         self.current_page = 0
         self.total_pages = 0
+        
+        # Performance optimization
+        self.needs_redraw = True
 
     def start(self):
         print("[Launcher] Started")
@@ -132,19 +135,22 @@ class App(AppBase):
 
 
     def update(self):
-        pass
+        # Only redraw when necessary
+        if self.needs_redraw:
+            self.drawAllApps()
+            self.needs_redraw = False
     
     def onkeyup(self, keycode):
         if keycode == "KEY_LEFT" or keycode == "KEY_A":
             old_selection = self.selection
             self.selection = (self.selection - 1) % self.app_count
             self.update_page_if_needed(old_selection)
-            self.drawAllApps()
+            self.needs_redraw = True
         elif keycode == "KEY_RIGHT" or keycode == "KEY_D":
             old_selection = self.selection
             self.selection = (self.selection + 1) % self.app_count
             self.update_page_if_needed(old_selection)
-            self.drawAllApps()
+            self.needs_redraw = True
         elif keycode == "KEY_UP" or keycode == "KEY_W":
             self.navigate_up()
         elif keycode == "KEY_DOWN" or keycode == "KEY_S":
@@ -179,7 +185,7 @@ class App(AppBase):
             new_selection = self.selection - cols
             if new_selection >= self.current_page * self.apps_per_page:
                 self.selection = new_selection
-                self.drawAllApps()
+                self.needs_redraw = True
         else:
             # Move to previous page, bottom row
             if self.current_page > 0:
@@ -196,7 +202,7 @@ class App(AppBase):
                 # Make sure we don't go beyond the available apps
                 max_selection = self.current_page * self.apps_per_page + prev_page_apps - 1
                 self.selection = min(target_selection, max_selection)
-                self.drawAllApps()
+                self.needs_redraw = True
     
     def navigate_down(self):
         """Navigate down in the grid layout"""
@@ -216,18 +222,18 @@ class App(AppBase):
             max_selection = self.current_page * self.apps_per_page + current_page_apps - 1
             if new_selection <= max_selection:
                 self.selection = new_selection
-                self.drawAllApps()
+                self.needs_redraw = True
             else:
                 # Try to position in the last row, same column if possible
                 last_row_start = self.current_page * self.apps_per_page + (current_page_rows - 1) * cols
                 target_selection = last_row_start + current_col
                 if target_selection <= max_selection:
                     self.selection = target_selection
-                    self.drawAllApps()
+                    self.needs_redraw = True
                 else:
                     # Go to the last available position
                     self.selection = max_selection
-                    self.drawAllApps()
+                    self.needs_redraw = True
         else:
             # Move to next page, top row
             if self.current_page < self.total_pages - 1:
@@ -239,7 +245,7 @@ class App(AppBase):
                 next_page_apps = self.get_apps_on_page(self.current_page)
                 max_selection = self.current_page * self.apps_per_page + next_page_apps - 1
                 self.selection = min(target_selection, max_selection)
-                self.drawAllApps()
+                self.needs_redraw = True
     
     def get_current_page_cols(self):
         """Get number of columns for current page layout"""
@@ -311,7 +317,7 @@ class App(AppBase):
         self.valid_apps = []
         self.app_count = 0
         # Recalculate everything
-        self.drawAllApps()
+        self.needs_redraw = True
                 
     def get_selected_app(self):
         valid_apps = self.get_valid_apps()

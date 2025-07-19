@@ -49,6 +49,10 @@ class App(AppBase):
         self.last_fetch = time.time()  # Initialize to current time to prevent immediate double-fetch
         self.fetch_interval = 120  # Fetch every 30 seconds
         
+        # Performance optimization
+        self.needs_redraw = True
+        self.has_animated_content = False  # Track if we have GIFs or spinner
+        
         # HTTP session management
         self.cookie_jar = http.cookiejar.CookieJar()
         self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.cookie_jar))
@@ -290,7 +294,7 @@ class App(AppBase):
                             self.loading = False
                             self.error_message = ""
                             self.scroll_to_bottom()
-                            self.refresh_display()
+                            self.refresh_display_smart()  # Use smart refresh for callbacks
                             return
                         else:
                             print("[Discourse Chat] Cached session invalid, need fresh login")
@@ -311,7 +315,7 @@ class App(AppBase):
                     self.error_message = ""
                     # Auto-scroll to show latest messages immediately
                     self.scroll_to_bottom()
-                    self.refresh_display()  # Force immediate display refresh
+                    self.refresh_display_smart()  # Use smart refresh for async callbacks
                 else:
                     self.loading = False
                     self.error_message = "No messages found or access denied"
@@ -657,38 +661,196 @@ class App(AppBase):
             self.t = 0
             
         # Handle cursor blinking when in input mode
+        cursor_changed = False
         if self.input_mode:
             self.cursor_blink_timer += 1
             if self.cursor_blink_timer >= self.cursor_blink_rate:
                 self.cursor_visible = not self.cursor_visible
                 self.cursor_blink_timer = 0
+                cursor_changed = True  # Track cursor state change for selective update
         else:
             # Reset cursor state when not in input mode
-            self.cursor_visible = True
-            self.cursor_blink_timer = 0
-            
-        if self.t % 10 == 0:  # Update every 0.5 seconds at 20Hz
-            self.refresh_display()
-            
+            if self.cursor_visible != True or self.cursor_blink_timer != 0:
+                self.cursor_visible = True
+                self.cursor_blink_timer = 0
+                self.needs_redraw = True
+        
+        # Handle different types of updates
+        # For animated content, update specific areas without full screen clear
+        if self.has_animated_content and self.t % 2 == 0:
+            # Update animated areas every 2 ticks (0.1 seconds at 20Hz)
+            self.update_animated_areas()
+        elif cursor_changed:
+            # Only update input area when cursor blinks
+            self.update_input_area()
+        elif self.needs_redraw:
+            # Full redraw for static content changes
+            if self.t % 10 == 0:  # Only update every 0.5 seconds for efficiency
+                self.refresh_display()
+                self.needs_redraw = False        
         # Auto-refresh messages every 30 seconds
         current_time = time.time()
         if current_time - self.last_fetch > self.fetch_interval and not self.loading:
             self.last_fetch = current_time
             self.fetch_messages_async()
     
+    def update_animated_areas(self):
+        """Update only the animated areas without clearing the whole screen"""
+        font = self.context["fonts"]["small"]
+        
+        # Track if we detected animated content
+        self.has_animated_content = False
+        
+        # Update loading spinner area if loading
+        if self.loading:
+            self.has_animated_content = True
+            # Clear only the spinner area (small rectangle in top right)
+            spinner_x = self.width - 12
+            spinner_y = 1
+            spinner_area_width = 12
+            spinner_area_height = 6
+            
+            # Clear the spinner area with black background
+            self.display_queue.put(("draw_base_area", spinner_x, spinner_y, spinner_area_width, spinner_area_height, 0))
+            
+            # Draw the animated spinner
+            spinner_chars = ["|", "/", "-", "\\"]
+            spinner_index = (getattr(self, 't', 0) // 2) % len(spinner_chars)
+            spinner_char = spinner_chars[spinner_index]
+            self.display_queue.put(("draw_base_text", font, f"[{spinner_char}]", spinner_x, spinner_y, 255))
+        
+        # Update animated GIFs in messages (if any)
+        self.update_animated_gifs()
+    
+    def update_animated_gifs(self):
+        """Update only animated GIF areas in messages"""
+        if not self.messages:
+            return
+            
+        font = self.context["fonts"]["small"]
+        line_height = 5
+        top_y = 2
+        input_area_reserve = 15
+        bottom_y = self.height - input_area_reserve
+        
+        # Calculate which messages are visible and check for animated GIFs
+        total_messages = len(self.messages)
+        start_message_index = max(0, total_messages - self.scroll_offset - 1)
+        
+        # Track current drawing position
+        y_pos = top_y
+        max_line_width = 30
+        username_line_width = max_line_width - 2
+        content_line_width = max_line_width - 4
+        
+        for i in range(start_message_index, total_messages):
+            if y_pos >= bottom_y:
+                break
+                
+            message = self.messages[i]
+            
+            # Calculate message layout (similar to draw_messages)
+            time_username = f"{message['username']} [{message['time']}]"
+            username_lines = self.wrap_text(time_username, username_line_width)
+            content_lines = self.wrap_text(message['content'], content_line_width)
+            
+            # Skip past username and content lines
+            y_pos += (len(username_lines) + len(content_lines) + 1) * line_height
+            
+            # Check for animated images
+            if 'images' in message and message['images']:
+                for img_data in message['images']:
+                    if y_pos >= bottom_y:
+                        break
+                        
+                    if self.has_image_data(img_data) and img_data.get('type') == 'animated':
+                        self.has_animated_content = True
+                        
+                        # Get current image frame
+                        current_image = self.get_current_image(img_data)
+                        img_width = img_data['width']
+                        img_height = img_data['height']
+                        
+                        # Calculate position (centered horizontally)
+                        x_offset = (self.width - img_width) // 2
+                        
+                        # Make sure image fits in available space
+                        max_image_height = min(img_height, bottom_y - y_pos - 5)
+                        if max_image_height > 10:
+                            if img_height > max_image_height:
+                                # Scale the image to fit
+                                scale_factor = max_image_height / img_height
+                                new_width = int(img_width * scale_factor)
+                                new_height = int(max_image_height)
+                                
+                                # Resize the PIL image
+                                from PIL import Image
+                                scaled_image = current_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                                
+                                # Clear only the scaled image area
+                                x_offset = (self.width - new_width) // 2
+                                self.display_queue.put(("draw_base_area", x_offset, y_pos, new_width, new_height, 0))
+                                self.display_queue.put(("draw_base_image", scaled_image, x_offset, y_pos))
+                                y_pos += new_height + 2
+                            else:
+                                # Clear only the original image area
+                                self.display_queue.put(("draw_base_area", x_offset, y_pos, img_width, img_height, 0))
+                                self.display_queue.put(("draw_base_image", current_image, x_offset, y_pos))
+                                y_pos += img_height + 2
+                        else:
+                            # Not enough space, skip
+                            y_pos += line_height
+                    else:
+                        # Skip non-animated images or placeholders
+                        if self.has_image_data(img_data):
+                            y_pos += img_data['height'] + 2
+                        else:
+                            y_pos += line_height
+            
+            # Add gap between messages
+            y_pos += line_height
+    
+    def refresh_display_smart(self):
+        """Smart refresh that uses selective updates when possible"""
+        if self.has_animated_content:
+            # If we have animated content, do selective updates
+            self.update_animated_areas()
+        else:
+            # Otherwise do a full refresh
+            self.refresh_display()
+    
+    def update_input_area(self):
+        """Update only the input area for cursor blinking"""
+        if self.input_mode:
+            # Calculate input area bounds
+            input_y = self.height - 12
+            font = self.context["fonts"]["small"]
+            line_height = 5
+            
+            # Calculate the area that needs to be redrawn (input area only)
+            max_input_lines = 3
+            bg_height = (max_input_lines + 1) * line_height + 4
+            bg_y = input_y - (max_input_lines - 1) * line_height - 2
+            
+            # Clear only the input area
+            self.display_queue.put(("draw_base_area", 0, bg_y, self.width, bg_height, 0))
+            
+            # Redraw just the input area
+            self.draw_input_area()
+    
     def refresh_display(self):
-        """Refresh the display with current status"""
+        """Refresh the entire display (full redraw)"""
         self.display_queue.put(("clear_base",))
         
         font = self.context["fonts"]["small"]
         line_height = 5
         
-        # Draw title bar
-        # title = "Discourse Chat - Blanket Fort"
-        # self.display_queue.put(("draw_base_text", font, title, 2, 1, 255))
+        # Track if we have animated content that needs frequent updates
+        self.has_animated_content = False
         
         # Draw loading spinner in top right if loading
         if self.loading:
+            self.has_animated_content = True  # Mark that we have animated content
             spinner_chars = ["|", "/", "-", "\\"]
             spinner_index = (getattr(self, 't', 0) // 2) % len(spinner_chars)  # Rotate every 0.1 seconds at 20Hz
             spinner_char = spinner_chars[spinner_index]
@@ -846,6 +1008,10 @@ class App(AppBase):
             if 'images' in message and message['images']:
                 for img_data in message['images']:
                     if y_pos < bottom_y and self.has_image_data(img_data):
+                        # Check if this is an animated GIF
+                        if img_data.get('type') == 'animated':
+                            self.has_animated_content = True  # Mark that we have animated GIFs
+                        
                         # Get the current image to display
                         current_image = self.get_current_image(img_data)
                         img_width = img_data['width']
@@ -1097,6 +1263,7 @@ class App(AppBase):
         if keycode == "KEY_ESC":
             self.input_mode = False
             self.input_buffer = ""
+            self.needs_redraw = True
             
         elif keycode == "KEY_ENTER":
             if self.input_buffer.strip():
@@ -1116,6 +1283,7 @@ class App(AppBase):
                 
             self.input_mode = False
             self.input_buffer = ""
+            self.needs_redraw = True
             
         elif keycode == "KEY_BACKSPACE":
             if self.input_buffer:
@@ -1123,6 +1291,7 @@ class App(AppBase):
                 # Reset cursor blinking when typing
                 self.cursor_visible = True
                 self.cursor_blink_timer = 0
+                self.needs_redraw = True
         
         else:
             # Handle character input
@@ -1132,22 +1301,23 @@ class App(AppBase):
                 # Reset cursor blinking when typing
                 self.cursor_visible = True
                 self.cursor_blink_timer = 0
+                self.needs_redraw = True
     
     def handle_browser_mode(self, keycode):
         """Handle keyboard input in browser mode"""
-        if keycode == "KEY_ESC":
-            self.return_to_launcher()
             
-        elif keycode == "KEY_UP":
+        if keycode == "KEY_UP" or (keycode == "KEY_W" and not self.input_mode):
             # Increase scroll_offset to go back in time (show older messages)
             max_scroll = max(0, len(self.messages) - 1)  # Can scroll back to the very first message
             if self.scroll_offset < max_scroll:
                 self.scroll_offset += 1
+                self.needs_redraw = True
                 
-        elif keycode == "KEY_DOWN":
+        elif keycode == "KEY_DOWN" or (keycode == "KEY_S" and not self.input_mode):
             # Decrease scroll_offset to go forward in time (show newer messages)
             if self.scroll_offset > 0:
                 self.scroll_offset -= 1
+                self.needs_redraw = True
                 
         elif keycode == "KEY_I":
             if self.credentials["username"] and self.credentials["username"] != "your_username_here":
@@ -1156,15 +1326,18 @@ class App(AppBase):
                 # Reset cursor blinking state
                 self.cursor_visible = True
                 self.cursor_blink_timer = 0
+                self.needs_redraw = True
             
-        elif keycode == "KEY_R":
+        elif keycode == "KEY_R" and not self.input_mode:
             self.fetch_messages_async()
+            self.needs_redraw = True
             
-        elif keycode == "KEY_C":
+        elif keycode == "KEY_C" and not self.input_mode:
             # Show config file location
             self.show_config_info()
+            self.needs_redraw = True
             
-        elif keycode == "KEY_Q":
+        elif (keycode == "KEY_Q" and not self.input_mode) or keycode == "KEY_ESC":
             self.return_to_launcher()
     
     def keycode_to_char(self, keycode):
@@ -1390,8 +1563,8 @@ class App(AppBase):
                         img_data['url'] = url
                         msg['images'].append(img_data)
                         print(f"[Discourse Chat] Downloaded and processed image: {url}")
-                        # Trigger display refresh
-                        self.refresh_display()
+                        # Trigger display refresh - mark for redraw instead of immediate refresh
+                        self.needs_redraw = True
                 
                 # Start download in background
                 thread = threading.Thread(target=download_image, args=(url, message))

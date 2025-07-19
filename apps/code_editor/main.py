@@ -57,9 +57,16 @@ class App(AppBase):
         self.last_cursor_pos = (0, 0)  # Track position changes
         self.last_cursor_draw_pos = None  # Track last drawn cursor position (x, y, width, height)
         
+        # Performance optimization
+        self.needs_redraw = True
+        
     def start(self):
         """Initialize the editor"""
         self.refresh_display()
+        
+    def mark_for_redraw(self):
+        """Mark the editor for redraw on next update cycle"""
+        self.needs_redraw = True
         
     def speak(self, text, background=True):
         """Speak text if TTS is enabled"""
@@ -81,15 +88,19 @@ class App(AppBase):
             self.last_cursor_pos = current_pos
             self.cursor_blink_timer = 0
             self.cursor_visible = True
+            self.needs_redraw = True
         else:
             # Update blink timer
             self.cursor_blink_timer += 1
             if self.cursor_blink_timer >= self.cursor_blink_rate:
                 self.cursor_visible = not self.cursor_visible
                 self.cursor_blink_timer = 0
+                self.needs_redraw = True
             
-        if self.t % 10 == 0:  # Update every 0.5 seconds at 20Hz
+        # Only redraw when necessary
+        if self.needs_redraw and self.t % 10 == 0:  # Update every 0.5 seconds at 20Hz
             self.refresh_display()
+            self.needs_redraw = False
     
     def refresh_display(self):
         """Refresh the entire display"""
@@ -328,6 +339,9 @@ class App(AppBase):
     
     def onkeyup(self, keycode):
         """Handle key releases"""
+        # Mark for redraw on any key input
+        self.mark_for_redraw()
+        
         if self.mode == "normal":
             self.handle_normal_mode(keycode)
         elif self.mode == "insert":

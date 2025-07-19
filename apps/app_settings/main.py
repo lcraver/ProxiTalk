@@ -20,6 +20,10 @@ class App(AppBase):
         self.item_height = 7
         self.header_height = 6
         self.footer_height = 6
+        
+        # Performance optimization
+        self.needs_redraw = True
+        
         print("[App Settings] App initialized")
         
     def start(self):
@@ -40,7 +44,7 @@ class App(AppBase):
             
             # Add visibility and pinned status
             is_hidden = self.user_prefs.is_app_hidden(app['name']) if self.user_prefs else False
-            is_pinned = self.user_prefs.get_preference(f"app_{app['name']}_pinned", False) if self.user_prefs else False
+            is_pinned = self.user_prefs.is_app_pinned(app['name']) if self.user_prefs else False
             app_info = {
                 'name': app['name'],
                 'display_name': app['metadata'].get('name', app['name']),
@@ -236,8 +240,7 @@ class App(AppBase):
                             launcher_instance.refresh_apps()
                             print("[App Settings] Refreshed launcher app list")
                     
-                    # Redraw interface
-                    self.draw_interface()
+                    # Redraw will happen in update() method
                 else:
                     print(f"[App Settings] Failed to toggle visibility for {app_name}")
             else:  # Pinned tab
@@ -256,26 +259,29 @@ class App(AppBase):
                             launcher_instance.refresh_apps()
                             print("[App Settings] Refreshed launcher app list")
                     
-                    # Redraw interface
-                    self.draw_interface()
+                    # Redraw will happen in update() method
                 else:
                     print(f"[App Settings] Failed to toggle pinned status for {app_name}")
                 
     def update(self):
-        pass
+        # Only redraw when necessary
+        if self.needs_redraw:
+            self.draw_interface()
+            self.needs_redraw = False
         
     def onkeyup(self, keycode):
+        # Mark for redraw on any input
+        self.needs_redraw = True
+        
         if keycode == "KEY_UP" or keycode == "KEY_W":
             if self.filtered_apps and self.selection > 0:
                 self.selection -= 1
                 self.update_scroll()
-                self.draw_interface()
                 
         elif keycode == "KEY_DOWN" or keycode == "KEY_S":
             if self.filtered_apps and self.selection < len(self.filtered_apps) - 1:
                 self.selection += 1
                 self.update_scroll()
-                self.draw_interface()
                 
         elif keycode == "KEY_LEFT" or keycode == "KEY_A":
             self.switch_tab(-1)
@@ -297,15 +303,13 @@ class App(AppBase):
             self.load_apps()
             self.selection = 0
             self.scroll_offset = 0
-            self.draw_interface()
             
     def switch_tab(self, direction):
         """Switch to next or previous tab"""
         new_tab = self.current_tab + direction
         if 0 <= new_tab < len(self.tabs):
             self.current_tab = new_tab
-            self.redraw_needed = True
-            self.draw_interface()
+            # Redraw will happen in update() method
             
     def stop(self):
         print("[App Settings] Stopped")
