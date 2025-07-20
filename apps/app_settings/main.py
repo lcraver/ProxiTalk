@@ -4,6 +4,7 @@ class App(AppBase):
     def __init__(self, context):
         super().__init__(context)
         self.display_queue = context["display_queue"]
+        self.draw = context["drawing"]  # New region-based drawing system
         self.user_prefs = context.get("user_preferences")
         self.selection = 0
         self.all_apps = []
@@ -24,8 +25,13 @@ class App(AppBase):
         
         # Performance optimization
         self.needs_redraw = True
+        self.last_drawn_tab = -1
+        self.last_drawn_selection = -1
+        self.last_drawn_scroll = -1
         
-        print("[App Settings] App initialized")
+        print("[App Settings] App initialized with hardware optimizations")
+        print("[App Settings] - Batching enabled to eliminate line-by-line drawing on real hardware")
+        print("[App Settings] - Region-based updates for minimal display transfers")
         
     def start(self):
         print("[App Settings] Started")
@@ -119,24 +125,33 @@ class App(AppBase):
         self.all_overlays.sort(key=lambda x: x['display_name'].lower())
         
     def draw_interface(self):
-        """Draw the main interface"""
-        self.display_queue.put(("clear_base",))
+        """Draw the main interface using region-based updates with hardware optimization"""
+        # Use batching for optimal hardware performance
+        self.draw["begin_batch"]()
         
-        # Draw header
-        self.draw_header()
-        
-        # Draw app list
-        self.draw_app_list()
-        
-        # Draw footer with instructions
-        self.draw_footer()
+        try:
+            self.draw["clear_screen"]()
+            
+            # Draw all components (will be batched for single hardware update)
+            self.draw_header()
+            self.draw_app_list()
+            self.draw_footer()
+            
+            # Update tracking variables
+            self.last_drawn_tab = self.current_tab
+            self.last_drawn_selection = self.selection
+            self.last_drawn_scroll = self.scroll_offset
+        finally:
+            # Execute all drawing operations at once
+            self.draw["end_batch"]()
         
     def draw_header(self):
-        """Draw the header with title and tab navigation"""
+        """Draw the header with title and tab navigation using region updates"""
         font_small = self.context["fonts"]["small"]
         
-        # Draw white background for header
-        self.display_queue.put(("draw_base_area", 0, 0, 128, self.header_height, 255))
+        # Clear and draw white background for header
+        self.draw["clear_area"](0, 0, 128, self.header_height)
+        self.draw["draw_area"](0, 0, 128, self.header_height, 255)
         
         # Current tab title
         current_tab_name = self.tabs[self.current_tab]
@@ -148,24 +163,31 @@ class App(AppBase):
         
         # Draw navigation arrows
         if self.current_tab > 0:
-            self.display_queue.put(("draw_base_text", font_small, "[", 2, 1, 0))
+            self.draw["draw_text"]("[", 2, 1, font_small, 0)
         else:
-            self.display_queue.put(("draw_base_text", font_small, "|", 2, 1, 0))
+            self.draw["draw_text"]("|", 2, 1, font_small, 0)
         if self.current_tab < len(self.tabs) - 1:
-            self.display_queue.put(("draw_base_text", font_small, "]", 120, 1, 0))
+            self.draw["draw_text"]("]", 120, 1, font_small, 0)
         else:
-            self.display_queue.put(("draw_base_text", font_small, "|", 120, 1, 0))
+            self.draw["draw_text"]("|", 120, 1, font_small, 0)
         
         # Draw title
-        self.display_queue.put(("draw_base_text", font_small, title, title_x, 1, 0))
+        self.draw["draw_text"](title, title_x, 1, font_small, 0)
         
     def draw_app_list(self):
-        """Draw the scrollable list of apps or overlays"""
+        """Draw the scrollable list of apps or overlays using region updates with hardware optimization"""
+        # Note: Batching is handled by parent draw_interface() method - no nested batching needed
+        
         # Choose the appropriate list based on current tab
         if self.current_tab == 2:  # Overlays tab
             current_list = self.all_overlays
         else:  # Apps tabs
             current_list = self.filtered_apps
+            
+        # Clear the app list area
+        list_y = self.header_height + 1
+        list_height = 64 - self.header_height - self.footer_height - 2
+        self.draw["clear_area"](0, list_y, 128, list_height)
             
         if not current_list:
             # Show appropriate "No items found" message
@@ -177,21 +199,21 @@ class App(AppBase):
             msg_width = self.context["get_text_size"](msg, font_small)[0]
             msg_x = (128 - msg_width) // 2
             msg_y = self.header_height + 20
-            self.display_queue.put(("draw_base_text", font_small, msg, msg_x, msg_y))
+            self.draw["draw_text"](msg, msg_x, msg_y, font_small)
             return
             
         # Calculate visible range
         start_idx = self.scroll_offset
         end_idx = min(start_idx + self.max_visible_items, len(current_list))
         
-        # Draw each visible item
+        # Draw each visible item (all will be batched for single hardware update)
         for i in range(start_idx, end_idx):
             item = current_list[i]
             y_pos = self.header_height + 1 + (i - start_idx) * self.item_height
             
             # Highlight selected item
             if i == self.selection:
-                self.display_queue.put(("draw_base_area", 0, y_pos, self.width - 4, self.item_height, 255))
+                self.draw["draw_area"](0, y_pos, self.width - 5, self.item_height, 255)
                 text_color = 0  # Black text on white background
             else:
                 text_color = 255  # White text on black background
@@ -207,7 +229,7 @@ class App(AppBase):
                     item_name = item_name[:-1]
                 item_name += "..."
             
-            self.display_queue.put(("draw_base_text", font_small, item_name, 2, y_pos+1, text_color))
+            self.draw["draw_text"](item_name, 2, y_pos+1, font_small, text_color)
             
             # Draw status based on current tab
             if self.current_tab == 0:  # Visibility tab
@@ -226,14 +248,14 @@ class App(AppBase):
                 
             status_width = self.context["get_text_size"](status, font_small)[0]
             status_x = 128 - status_width - 5
-            self.display_queue.put(("draw_base_text", font_small, status, status_x, y_pos+1, text_color))
+            self.draw["draw_text"](status, status_x, y_pos+1, font_small, text_color)
             
         # Draw scroll indicators if needed
         if len(current_list) > self.max_visible_items:
             self.draw_scroll_indicators()
             
     def draw_scroll_indicators(self):
-        """Draw scroll indicators similar to discourse_chat"""
+        """Draw scroll indicators using region updates"""
         # Choose the appropriate list based on current tab
         if self.current_tab == 2:  # Overlays tab
             current_list = self.all_overlays
@@ -261,18 +283,19 @@ class App(AppBase):
             indicator_y = scrollbar_top + int(scroll_ratio * usable_height)
             
             # Draw scrollbar background track (thin white line)
-            self.display_queue.put(("draw_base_area", scrollbar_x + 2, scrollbar_top, 1, scrollbar_height, 255))
+            self.draw["draw_area"](scrollbar_x + 2, scrollbar_top, 1, scrollbar_height, 255)
             
             # Draw scroll indicator (filled rectangle)
-            self.display_queue.put(("draw_base_area", scrollbar_x, indicator_y, 3, indicator_height, 255))
+            self.draw["draw_area"](scrollbar_x, indicator_y, 3, indicator_height, 255)
             
     def draw_footer(self):
-        """Draw footer with instructions"""
+        """Draw footer with instructions using region updates"""
         font_small = self.context["fonts"]["small"]
         footer_y = 64 - self.footer_height
         
-        # Draw white background for footer
-        self.display_queue.put(("draw_base_area", 0, footer_y, 128, self.footer_height, 255))
+        # Clear and draw white background for footer
+        self.draw["clear_area"](0, footer_y, 128, self.footer_height)
+        self.draw["draw_area"](0, footer_y, 128, self.footer_height, 255)
         
         # Instructions based on current tab
         if self.current_tab == 0:  # Visibility tab
@@ -295,8 +318,82 @@ class App(AppBase):
             inst_width = self.context["get_text_size"](instructions, font_small)[0]
             
         inst_x = (128 - inst_width) // 2
-        self.display_queue.put(("draw_base_text", font_small, instructions, inst_x, footer_y + 1, 0))
+        self.draw["draw_text"](instructions, inst_x, footer_y + 1, font_small, 0)
         
+    def draw_single_item(self, item_index):
+        """Efficiently redraw a single item in the list with hardware optimization"""
+        # Use batching even for single items to ensure optimal hardware performance
+        self.draw["begin_batch"]()
+        
+        try:
+            # Choose the appropriate list based on current tab
+            if self.current_tab == 2:  # Overlays tab
+                current_list = self.all_overlays
+            else:  # Apps tabs
+                current_list = self.filtered_apps
+                
+            if not current_list or item_index >= len(current_list):
+                return
+                
+            # Check if item is currently visible
+            start_idx = self.scroll_offset
+            end_idx = min(start_idx + self.max_visible_items, len(current_list))
+            
+            if item_index < start_idx or item_index >= end_idx:
+                return  # Item not visible, no need to redraw
+                
+            # Calculate position
+            visible_index = item_index - start_idx
+            y_pos = self.header_height + 1 + visible_index * self.item_height
+            
+            # Clear the item area
+            self.draw["clear_area"](0, y_pos, self.width - 4, self.item_height)
+            
+            # Redraw the item
+            item = current_list[item_index]
+            
+            # Highlight selected item
+            if item_index == self.selection:
+                self.draw["draw_area"](0, y_pos, self.width - 4, self.item_height, 255)
+                text_color = 0  # Black text on white background
+            else:
+                text_color = 255  # White text on black background
+                
+            # Draw item name
+            font_small = self.context["fonts"]["small"]
+            item_name = item['display_name']
+            
+            # Truncate name if too long
+            max_name_width = 80
+            if self.context["get_text_size"](item_name, font_small)[0] > max_name_width:
+                while len(item_name) > 1 and self.context["get_text_size"](item_name + "...", font_small)[0] > max_name_width:
+                    item_name = item_name[:-1]
+                item_name += "..."
+            
+            self.draw["draw_text"](item_name, 2, y_pos+1, font_small, text_color)
+            
+            # Draw status based on current tab
+            if self.current_tab == 0:  # Visibility tab
+                status = "Hidden" if item['hidden'] else "Visible"
+            elif self.current_tab == 1:  # Pinned tab
+                status = "Pinned" if item['pinned'] else "Not Pinned"
+            else:  # Overlays tab
+                # Show both disabled state and running state for overlays
+                if item['disabled']:
+                    status = "Disabled"
+                else:
+                    # Check if the overlay is actually running
+                    app_manager = self.context.get("app_manager")
+                    is_running = app_manager.is_app_running(item['name']) if app_manager else False
+                    status = "Running" if is_running else "Stopped"
+                
+            status_width = self.context["get_text_size"](status, font_small)[0]
+            status_x = 128 - status_width - 5
+            self.draw["draw_text"](status, status_x, y_pos+1, font_small, text_color)
+        finally:
+            # Execute all operations at once for hardware optimization
+            self.draw["end_batch"]()
+
     def update_scroll(self):
         """Update scroll offset to keep selection visible"""
         # Choose the appropriate list based on current tab
@@ -342,7 +439,8 @@ class App(AppBase):
                             launcher_instance.refresh_apps()
                             print("[App Settings] Refreshed launcher app list")
                     
-                    # Redraw will happen in update() method
+                    # Use selective redraw instead of full redraw
+                    self.draw_single_item(self.selection)
                 else:
                     print(f"[App Settings] Failed to toggle visibility for {app_name}")
             else:  # Pinned tab
@@ -361,7 +459,8 @@ class App(AppBase):
                             launcher_instance.refresh_apps()
                             print("[App Settings] Refreshed launcher app list")
                     
-                    # Redraw will happen in update() method
+                    # Use selective redraw instead of full redraw
+                    self.draw_single_item(self.selection)
                 else:
                     print(f"[App Settings] Failed to toggle pinned status for {app_name}")
     
@@ -407,20 +506,40 @@ class App(AppBase):
                 else:
                     print("[App Settings] No app manager available")
                 
-                # Redraw will happen in update() method
+                # Use selective redraw instead of full redraw
+                self.draw_single_item(self.selection)
             else:
                 print(f"[App Settings] Failed to toggle status for overlay {overlay_name}")
                 
     def update(self):
-        # Only redraw when necessary
+        # Smart redraw - only update what changed
         if self.needs_redraw:
-            self.draw_interface()
+            # Check what specifically changed to optimize redraws
+            tab_changed = (self.current_tab != self.last_drawn_tab)
+            selection_changed = (self.selection != self.last_drawn_selection)
+            scroll_changed = (self.scroll_offset != self.last_drawn_scroll)
+            
+            if tab_changed:
+                # Full redraw needed when tab changes
+                self.draw_interface()
+            elif selection_changed or scroll_changed:
+                # Use batching for partial updates too
+                self.draw["begin_batch"]()
+                try:
+                    # Only redraw the app list area when selection/scroll changes
+                    self.draw_app_list()
+                finally:
+                    self.draw["end_batch"]()
+                # Update tracking variables
+                self.last_drawn_selection = self.selection
+                self.last_drawn_scroll = self.scroll_offset
+            else:
+                # Full redraw for other changes
+                self.draw_interface()
+                
             self.needs_redraw = False
         
-    def onkeyup(self, keycode):
-        # Mark for redraw on any input
-        self.needs_redraw = True
-        
+    def onkeyup(self, keycode):        
         if keycode == "KEY_UP" or keycode == "KEY_W":
             # Choose the appropriate list based on current tab
             if self.current_tab == 2:  # Overlays tab
@@ -429,8 +548,18 @@ class App(AppBase):
                 current_list = self.filtered_apps
                 
             if current_list and self.selection > 0:
+                old_selection = self.selection
                 self.selection -= 1
                 self.update_scroll()
+                
+                # Smart redraw - only redraw the two affected items if no scrolling occurred
+                if self.scroll_offset == self.last_drawn_scroll:
+                    self.draw_single_item(old_selection)
+                    self.draw_single_item(self.selection)
+                    self.last_drawn_selection = self.selection
+                else:
+                    # Scrolling occurred, need to redraw the whole list
+                    self.needs_redraw = True
                 
         elif keycode == "KEY_DOWN" or keycode == "KEY_S":
             # Choose the appropriate list based on current tab
@@ -440,8 +569,18 @@ class App(AppBase):
                 current_list = self.filtered_apps
                 
             if current_list and self.selection < len(current_list) - 1:
+                old_selection = self.selection
                 self.selection += 1
                 self.update_scroll()
+                
+                # Smart redraw - only redraw the two affected items if no scrolling occurred
+                if self.scroll_offset == self.last_drawn_scroll:
+                    self.draw_single_item(old_selection)
+                    self.draw_single_item(self.selection)
+                    self.last_drawn_selection = self.selection
+                else:
+                    # Scrolling occurred, need to redraw the whole list
+                    self.needs_redraw = True
                 
         elif keycode == "KEY_LEFT" or keycode == "KEY_A":
             self.switch_tab(-1)
@@ -450,6 +589,7 @@ class App(AppBase):
             self.switch_tab(1)
                 
         elif keycode == "KEY_SPACE" or keycode == "KEY_ENTER":
+            # Toggle operations handle their own selective redraws
             self.toggle_app_visibility()
             
         elif keycode == "KEY_ESC" or keycode == "KEY_BACKSPACE":
@@ -470,6 +610,7 @@ class App(AppBase):
             
             self.selection = 0
             self.scroll_offset = 0
+            self.needs_redraw = True
             
         elif keycode == "KEY_T":
             # Debug: Print overlay status information
@@ -494,7 +635,8 @@ class App(AppBase):
             # Reset selection and scroll when switching tabs
             self.selection = 0
             self.scroll_offset = 0
-            # Redraw will happen in update() method
+            # Mark for redraw to update the interface
+            self.needs_redraw = True
             
     def stop(self):
         print("[App Settings] Stopped")

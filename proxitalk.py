@@ -65,7 +65,7 @@ if IS_WINDOWS:
             
             # Debug overlay for region updates
             self._debug_regions = []
-            self._debug_overlay_duration = 0.5  # Show overlay for 0.5 seconds
+            self._debug_overlay_duration = 1/20 * 5  # Show overlay for 5 frames at 20 FPS
             self._show_debug_overlay = True  # Toggle this to enable/disable debug overlay
 
             self._thread = threading.Thread(target=self._run_pygame_loop, daemon=True)
@@ -791,11 +791,51 @@ def mark_display_dirty(x=None, y=None, width=None, height=None):
 #    - context["drawing"]["mark_dirty"](x, y, width, height)
 #    - context["drawing"]["update_region"](x, y, width, height)
 #
+# 5. BATCHING FOR HARDWARE PERFORMANCE:
+#    - context["drawing"]["begin_batch"]() - Start batching operations
+#    - context["drawing"]["end_batch"]() - Execute all batched operations at once
+#
 # PERFORMANCE TIPS:
 # - Use overlay layer for frequently changing content (cursors, animations)
 # - Use base layer for static content (text, backgrounds) 
 # - Group nearby changes to reduce the number of dirty regions
+# - Use begin_batch/end_batch for drawing multiple items at once (reduces hardware updates)
 # - Only update regions that actually changed
+
+# Batching system for hardware performance
+_batch_mode = False
+_batch_operations = []
+
+def begin_batch():
+    """Start batching drawing operations to reduce hardware updates"""
+    global _batch_mode, _batch_operations
+    _batch_mode = True
+    _batch_operations = []
+
+def end_batch():
+    """Execute all batched operations at once"""
+    global _batch_mode, _batch_operations
+    if not _batch_mode:
+        return
+    
+    _batch_mode = False
+    
+    # Execute all batched operations
+    for op_type, args in _batch_operations:
+        if op_type == "text":
+            layer, font, text, x, y, fill = args
+            display_draw_text_immediate(layer, font, text, x, y, fill)
+        elif op_type == "area":
+            layer, x, y, width, height, fill = args
+            display_draw_area_immediate(layer, x, y, width, height, fill)
+        elif op_type == "icon":
+            layer, icon_img, x, y = args
+            display_draw_icon_immediate(layer, icon_img, x, y)
+    
+    _batch_operations = []
+    
+    # Single update at the end
+    update_display(force=True)
 
 # Wrap text to fit screen width with caching
 _text_wrap_cache = {}
@@ -883,7 +923,8 @@ def display_set_screen(title, text):
         # Force immediate update for screen changes to prevent black screens
         update_display(force=True)
 
-def display_draw_text(layer, font, text, x=0, y=0, fill=255):
+def display_draw_text_immediate(layer, font, text, x=0, y=0, fill=255):
+    """Draw text immediately without batching - used internally"""
     with draw_lock:
         draw_text_aligned(layer, text, x, y, font, fill)
         # Calculate text dimensions for dirty region
@@ -894,7 +935,15 @@ def display_draw_text(layer, font, text, x=0, y=0, fill=255):
         if IS_WINDOWS and hasattr(disp, 'add_debug_region'):
             disp.add_debug_region(int(x), int(y), int(text_width), int(text_height))
 
-def display_draw_icon(layer, icon_img, x=0, y=height - 8):
+def display_draw_text(layer, font, text, x=0, y=0, fill=255):
+    """Draw text with optional batching support"""
+    if _batch_mode:
+        _batch_operations.append(("text", (layer, font, text, x, y, fill)))
+    else:
+        display_draw_text_immediate(layer, font, text, x, y, fill)
+
+def display_draw_icon_immediate(layer, icon_img, x=0, y=height - 8):
+    """Draw icon immediately without batching - used internally"""
     with draw_lock:
         # Icon should already be converted to mode "1" from cache
         if icon_img and icon_img.mode != "1":
@@ -907,15 +956,30 @@ def display_draw_icon(layer, icon_img, x=0, y=height - 8):
             # Add debug region visualization (Windows only)
             if IS_WINDOWS and hasattr(disp, 'add_debug_region'):
                 disp.add_debug_region(int(x), int(y), int(icon_img.width), int(icon_img.height))
-        
-def display_draw_area(layer, x=0, y=0, width=128, height=64, fill=255):
+
+def display_draw_icon(layer, icon_img, x=0, y=height - 8):
+    """Draw icon with optional batching support"""
+    if _batch_mode:
+        _batch_operations.append(("icon", (layer, icon_img, x, y)))
+    else:
+        display_draw_icon_immediate(layer, icon_img, x, y)
+
+def display_draw_area_immediate(layer, x=0, y=0, width=128, height=64, fill=255):
+    """Draw area immediately without batching - used internally"""
     with draw_lock:
-        layer.rectangle((x, y, x + width, y + height), fill=fill)
+        layer.rectangle((x, y, x + width - 1, y + height - 1), fill=fill)
         mark_display_dirty(x, y, width, height)
         
         # Add debug region visualization (Windows only)
         if IS_WINDOWS and hasattr(disp, 'add_debug_region'):
             disp.add_debug_region(int(x), int(y), int(width), int(height))
+        
+def display_draw_area(layer, x=0, y=0, width=128, height=64, fill=255):
+    """Draw area with optional batching support"""
+    if _batch_mode:
+        _batch_operations.append(("area", (layer, x, y, width, height, fill)))
+    else:
+        display_draw_area_immediate(layer, x, y, width, height, fill)
 
 def display_draw_blinking_cursor(x, y, isOn):
     global current_app_cursor_enabled, cursor_state_changed, last_cursor_visible_state, prevDrawX, prevDrawY
@@ -1068,6 +1132,10 @@ def display_thread_func():
                     case "update_region":
                         _, x, y, width, height = cmd
                         update_display(region=(x, y, width, height))
+                    case "begin_batch":
+                        begin_batch()
+                    case "end_batch":
+                        end_batch()
                     case "exit":
                         print("[Display Thread] Exiting on exit command", flush=True)
                         break
@@ -1411,6 +1479,10 @@ def main():
             "draw_overlay_image": lambda img, x, y: display_queue.put(("draw_overlay_image", img, x, y)),
             "draw_overlay_area": lambda x, y, width, height, fill=255: display_queue.put(("draw_overlay_area", x, y, width, height, fill)),
             "clear_overlay_area": lambda x, y, width, height: display_queue.put(("clear_overlay_area", x, y, width, height)),
+            
+            # Hardware performance optimization (batching)
+            "begin_batch": lambda: display_queue.put(("begin_batch",)),
+            "end_batch": lambda: display_queue.put(("end_batch",)),
             
             # Region-based updates (for efficiency)
             "update_region": lambda x, y, width, height: display_queue.put(("update_region", x, y, width, height)),
