@@ -62,6 +62,11 @@ if IS_WINDOWS:
             self._update_lock = threading.Lock()
             self._pending_image = None
             self._stop_event = threading.Event()
+            
+            # Debug overlay for region updates
+            self._debug_regions = []
+            self._debug_overlay_duration = 0.5  # Show overlay for 0.5 seconds
+            self._show_debug_overlay = True  # Toggle this to enable/disable debug overlay
 
             self._thread = threading.Thread(target=self._run_pygame_loop, daemon=True)
             self._thread.start()
@@ -96,19 +101,40 @@ if IS_WINDOWS:
         def show(self):
             with self._update_lock:
                 self._pending_image = self._image.copy()
+        
+        def add_debug_region(self, x, y, width, height):
+            """Add a debug region to visualize updates"""
+            if self._show_debug_overlay:
+                import time
+                with self._update_lock:
+                    self._debug_regions.append({
+                        'x': x, 'y': y, 'width': width, 'height': height,
+                        'timestamp': time.time()
+                    })
 
         def _run_pygame_loop(self):
+            import time  # Import time module for timestamp calculations
             pygame.init()
             self.screen = pygame.display.set_mode((self.width * self.scale, self.height * self.scale))
             pygame.display.set_caption("ProxiTalk Emulated Display")
             clock = pygame.time.Clock()
+            last_surface = None  # Keep track of the last displayed surface
 
             while not self._stop_event.is_set():
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         self._stop_event.set()
+                    elif event.type == pygame.KEYDOWN:
+                        # Toggle debug overlay with F1 key
+                        if event.key == pygame.K_F1:
+                            self._show_debug_overlay = not self._show_debug_overlay
+                            print(f"[Debug] Region overlay: {'ON' if self._show_debug_overlay else 'OFF'}")
 
+                current_time = time.time()
+                needs_redraw = False
+                
                 with self._update_lock:
+                    # Check if we have a new image to display
                     if self._pending_image:
                         img = self._pending_image
                         size = img.size
@@ -116,11 +142,44 @@ if IS_WINDOWS:
                         # Convert to RGB for pygame compatibility
                         img_rgb = img.convert("RGB")
                         data = img_rgb.tobytes()
-                        surface = pygame.image.fromstring(data, size, "RGB")
-                        surface = pygame.transform.scale(surface, (self.width * self.scale, self.height * self.scale))
-                        self.screen.blit(surface, (0, 0))
-                        pygame.display.flip()
+                        last_surface = pygame.image.fromstring(data, size, "RGB")
+                        last_surface = pygame.transform.scale(last_surface, (self.width * self.scale, self.height * self.scale))
+                        needs_redraw = True
                         self._pending_image = None
+                    
+                    # Always process debug overlay if enabled, even without new image
+                    if self._show_debug_overlay:
+                        # Remove expired debug regions
+                        old_region_count = len(self._debug_regions)
+                        self._debug_regions = [
+                            region for region in self._debug_regions 
+                            if current_time - region['timestamp'] < self._debug_overlay_duration
+                        ]
+                        # If regions were removed or still exist, we need to redraw
+                        if old_region_count != len(self._debug_regions) or self._debug_regions:
+                            needs_redraw = True
+                
+                # Redraw if we have changes or active debug regions
+                if needs_redraw and last_surface:
+                    self.screen.blit(last_surface, (0, 0))
+                    
+                    # Draw debug overlay for region updates
+                    if self._show_debug_overlay:
+                        for region in self._debug_regions:
+                            # Calculate fade based on age
+                            age = current_time - region['timestamp']
+                            alpha = max(0, min(255, int(255 * (1.0 - age / self._debug_overlay_duration))))
+                            
+                            if alpha > 0:
+                                # Create a red transparent surface
+                                overlay = pygame.Surface((region['width'] * self.scale, region['height'] * self.scale))
+                                overlay.set_alpha(alpha // 2)  # Make it semi-transparent
+                                overlay.fill((255, 0, 0))  # Red color
+                                
+                                # Blit the overlay
+                                self.screen.blit(overlay, (region['x'] * self.scale, region['y'] * self.scale))
+                    
+                    pygame.display.flip()
 
                 clock.tick(12)  # Limit to 12 FPS
 
@@ -661,6 +720,11 @@ def update_display(force=False, region=None):
             composite_layer.paste(overlay_layer, (0, 0), overlay_layer)
             disp.image(composite_layer)
             disp.show()
+            
+            # Add debug region for full screen update (Windows only)
+            if IS_WINDOWS and hasattr(disp, 'add_debug_region'):
+                disp.add_debug_region(0, 0, width, height)
+            
             dirty_regions = []
         else:
             # Update only dirty regions
@@ -684,6 +748,10 @@ def update_display(force=False, region=None):
                 
                 # Paste back to composite layer
                 composite_layer.paste(temp_region, (region.x, region.y))
+                
+                # Add debug region visualization (Windows only)
+                if IS_WINDOWS and hasattr(disp, 'add_debug_region'):
+                    disp.add_debug_region(region.x, region.y, region.width, region.height)
             
             # Send full composite to display (hardware limitation)
             disp.image(composite_layer)
@@ -798,13 +866,13 @@ def display_set_screen(title, text):
         wrapped_lines = wrap_text_by_pixel_width(text, fontSmall, width-4)
         title_width = math.ceil(base_draw.textlength(title, fontSmall))
         title_top = top
-        title_height = fontSmall.getsize(title)[1]
-        base_draw.text((x + width/2 - title_width/2, title_top), title, font=fontSmall, fill=255)
+        title_width_calc, title_height = get_text_size(title, fontSmall)
+        draw_text_aligned(base_draw, title, x + width/2 - title_width/2, title_top, fontSmall, 255)
 
         startY = top + title_height + padding
         max_lines = (height - startY) // bodyLineHeight
         for i in range(min(len(wrapped_lines), max_lines)):
-            base_draw.text((x, startY + i * bodyLineHeight), wrapped_lines[i], font=fontSmall, fill=255)
+            draw_text_aligned(base_draw, wrapped_lines[i], x, startY + i * bodyLineHeight, fontSmall, 255)
             # Store previous position before updating
             prevDrawY = lastDrawY
             prevDrawX = lastDrawX
@@ -817,10 +885,14 @@ def display_set_screen(title, text):
 
 def display_draw_text(layer, font, text, x=0, y=0, fill=255):
     with draw_lock:
-        layer.text((x, y), text, font=font, fill=fill)
+        draw_text_aligned(layer, text, x, y, font, fill)
         # Calculate text dimensions for dirty region
         text_width, text_height = get_text_size(text, font)
         mark_display_dirty(x, y, text_width, text_height)
+        
+        # Add debug region visualization (Windows only)
+        if IS_WINDOWS and hasattr(disp, 'add_debug_region'):
+            disp.add_debug_region(int(x), int(y), int(text_width), int(text_height))
 
 def display_draw_icon(layer, icon_img, x=0, y=height - 8):
     with draw_lock:
@@ -831,11 +903,19 @@ def display_draw_icon(layer, icon_img, x=0, y=height - 8):
             layer.paste(icon_img, (x, y), icon_img)
             # Mark icon area as dirty
             mark_display_dirty(x, y, icon_img.width, icon_img.height)
+            
+            # Add debug region visualization (Windows only)
+            if IS_WINDOWS and hasattr(disp, 'add_debug_region'):
+                disp.add_debug_region(int(x), int(y), int(icon_img.width), int(icon_img.height))
         
 def display_draw_area(layer, x=0, y=0, width=128, height=64, fill=255):
     with draw_lock:
         layer.rectangle((x, y, x + width, y + height), fill=fill)
         mark_display_dirty(x, y, width, height)
+        
+        # Add debug region visualization (Windows only)
+        if IS_WINDOWS and hasattr(disp, 'add_debug_region'):
+            disp.add_debug_region(int(x), int(y), int(width), int(height))
 
 def display_draw_blinking_cursor(x, y, isOn):
     global current_app_cursor_enabled, cursor_state_changed, last_cursor_visible_state, prevDrawX, prevDrawY
@@ -1221,9 +1301,38 @@ def get_text_size(text, font):
     temp_img = Image.new("1", (1, 1))
     temp_draw = ImageDraw.Draw(temp_img)
     bbox = temp_draw.textbbox((0, 0), text, font=font)
+    
+    # bbox returns (left, top, right, bottom)
+    # For consistent behavior, we want the actual rendered size
     width = bbox[2] - bbox[0]
     height = bbox[3] - bbox[1]
+    
+    # Ensure we return positive values
+    width = max(0, width)
+    height = max(0, height)
+    
+    if font == fontSmall:
+        # For small font, we want to ensure it fits within the expected line height
+        height = max(height, 4)
+        width -= 1
+    
     return width, height
+
+def get_text_baseline_offset(font):
+    if font == fontSmall:
+        return 1
+    else:
+        return 0
+
+def draw_text_aligned(layer, text, x, y, font, fill=255):
+    """
+    Draw text with proper alignment compensation for PIL's positioning changes.
+    """
+    # Get the baseline offset to compensate for PIL's text positioning
+    offset = get_text_baseline_offset(font)
+    # Adjust y position by the offset to align text properly
+    adjusted_y = y - offset
+    layer.text((x, adjusted_y), text, font=font, fill=fill)
 
 def main():
     # Start display thread

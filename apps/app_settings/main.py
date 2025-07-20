@@ -11,14 +11,14 @@ class App(AppBase):
         self.filtered_apps = []
         self.width = context["screen_width"]
         self.scroll_offset = 0
-        self.max_visible_items = 7  # Number of apps visible at once
+        self.max_visible_items = 8  # Number of apps visible at once
         
         # Tab system
         self.current_tab = 0  # 0 = Visibility, 1 = Pinned, 2 = Overlays
         self.tabs = ["Visibility", "Pinned", "Overlays"]
         
         # UI constants
-        self.item_height = 7
+        self.item_height = 6
         self.header_height = 6
         self.footer_height = 6
         
@@ -136,7 +136,7 @@ class App(AppBase):
         font_small = self.context["fonts"]["small"]
         
         # Draw white background for header
-        self.display_queue.put(("draw_base_area", 0, 0, 128, self.header_height - 1, 255))
+        self.display_queue.put(("draw_base_area", 0, 0, 128, self.header_height, 255))
         
         # Current tab title
         current_tab_name = self.tabs[self.current_tab]
@@ -148,16 +148,16 @@ class App(AppBase):
         
         # Draw navigation arrows
         if self.current_tab > 0:
-            self.display_queue.put(("draw_base_text", font_small, "[", 2, 0, 0))
+            self.display_queue.put(("draw_base_text", font_small, "[", 2, 1, 0))
         else:
-            self.display_queue.put(("draw_base_text", font_small, "|", 2, 0, 0))
+            self.display_queue.put(("draw_base_text", font_small, "|", 2, 1, 0))
         if self.current_tab < len(self.tabs) - 1:
-            self.display_queue.put(("draw_base_text", font_small, "]", 120, 0, 0))
+            self.display_queue.put(("draw_base_text", font_small, "]", 120, 1, 0))
         else:
-            self.display_queue.put(("draw_base_text", font_small, "|", 120, 0, 0))
+            self.display_queue.put(("draw_base_text", font_small, "|", 120, 1, 0))
         
         # Draw title
-        self.display_queue.put(("draw_base_text", font_small, title, title_x, 0, 0))
+        self.display_queue.put(("draw_base_text", font_small, title, title_x, 1, 0))
         
     def draw_app_list(self):
         """Draw the scrollable list of apps or overlays"""
@@ -191,7 +191,7 @@ class App(AppBase):
             
             # Highlight selected item
             if i == self.selection:
-                self.display_queue.put(("draw_base_area", 0, y_pos, self.width - 5, self.item_height-2, 255))
+                self.display_queue.put(("draw_base_area", 0, y_pos, self.width - 4, self.item_height, 255))
                 text_color = 0  # Black text on white background
             else:
                 text_color = 255  # White text on black background
@@ -207,7 +207,7 @@ class App(AppBase):
                     item_name = item_name[:-1]
                 item_name += "..."
             
-            self.display_queue.put(("draw_base_text", font_small, item_name, 2, y_pos, text_color))
+            self.display_queue.put(("draw_base_text", font_small, item_name, 2, y_pos+1, text_color))
             
             # Draw status based on current tab
             if self.current_tab == 0:  # Visibility tab
@@ -225,8 +225,8 @@ class App(AppBase):
                     status = "Running" if is_running else "Stopped"
                 
             status_width = self.context["get_text_size"](status, font_small)[0]
-            status_x = 128 - status_width - 2 - 3
-            self.display_queue.put(("draw_base_text", font_small, status, status_x, y_pos, text_color))
+            status_x = 128 - status_width - 5
+            self.display_queue.put(("draw_base_text", font_small, status, status_x, y_pos+1, text_color))
             
         # Draw scroll indicators if needed
         if len(current_list) > self.max_visible_items:
@@ -246,7 +246,7 @@ class App(AppBase):
         # Calculate scrollbar dimensions
         scrollbar_x = 128 - 3  # Position at right edge
         scrollbar_top = self.header_height + 1
-        scrollbar_bottom = 64 - self.footer_height - 4
+        scrollbar_bottom = 64 - self.footer_height - 1 - 2 # Leave 2px padding at bottom and 1px at the top
         scrollbar_height = scrollbar_bottom - scrollbar_top
         
         # Calculate scroll position
@@ -295,7 +295,7 @@ class App(AppBase):
             inst_width = self.context["get_text_size"](instructions, font_small)[0]
             
         inst_x = (128 - inst_width) // 2
-        self.display_queue.put(("draw_base_text", font_small, instructions, inst_x, footer_y, 0))
+        self.display_queue.put(("draw_base_text", font_small, instructions, inst_x, footer_y + 1, 0))
         
     def update_scroll(self):
         """Update scroll offset to keep selection visible"""

@@ -6,6 +6,7 @@ class App(AppBase):
     def __init__(self, context):
         super().__init__(context)
         self.display_queue = context["display_queue"]
+        self.draw = context["drawing"]  # New region-based drawing API
         self.selection = 0
         self.app_count = 0
         self.valid_apps = []
@@ -16,8 +17,16 @@ class App(AppBase):
         self.current_page = 0
         self.total_pages = 0
         
-        # Performance optimization
+        # Performance optimization - track what needs updating
         self.needs_redraw = True
+        self.needs_full_redraw = True  # First time always full redraw
+        self.last_page = -1
+        self.last_selection = -1
+        self.last_layout = None  # Track layout changes
+        
+        # Track drawn regions for efficient updates
+        self.app_regions = {}  # {app_index: (x, y, width, height)}
+        self.dots_region = None  # (x, y, width, height) for pagination dots
 
     def start(self):
         print("[Launcher] Started")
@@ -36,15 +45,36 @@ class App(AppBase):
                         print(f"[Launcher] Auto-selected last app: {last_app_name} (index {i}, page {self.current_page})")
                         break
         
+    def start(self):
+        print("[Launcher] Started")
+        
+        # Load last selection from preferences if available
+        if self.user_prefs:
+            last_app_name = self.user_prefs.get_last_launched_app()
+            if last_app_name:
+                # Find the index of the last launched app
+                valid_apps = self.get_valid_apps()
+                for i, app in enumerate(valid_apps):
+                    if app['name'] == last_app_name:
+                        self.selection = i
+                        # Calculate which page the selected app is on
+                        self.current_page = i // self.apps_per_page
+                        print(f"[Launcher] Auto-selected last app: {last_app_name} (index {i}, page {self.current_page})")
+                        break
+        
+        # Initial full screen clear and draw
+        self.needs_full_redraw = True
         self.drawAllApps()
         
     def drawAllApps(self):
-        self.display_queue.put(("clear_base_area", 0, 0, 128, 64))
-
+        """Smart drawing that only updates changed regions"""
         all_apps = self.get_valid_apps()
         self.app_count = len(all_apps)
 
         if self.app_count == 0:
+            if self.needs_full_redraw:
+                self.draw["clear_screen"]()
+                self.needs_full_redraw = False
             return
 
         # Calculate pagination
@@ -64,55 +94,125 @@ class App(AppBase):
         if not page_apps:
             return
 
-        # Draw pagination dots on the left side (if more than 1 page)
-        if self.total_pages > 1:
-            self.draw_pagination_dots()
-
-        # Calculate icon layout (reserve space for dots if needed)
-        dots_width = 0
-        available_width = 128 - dots_width
+        # Calculate layout
+        current_layout = self.calculate_layout(page_apps)
         
-        # Assume consistent icon size
+        # Determine what needs updating
+        page_changed = self.last_page != self.current_page
+        selection_changed = self.last_selection != self.selection
+        layout_changed = self.last_layout != current_layout
+        
+        # Full redraw if page changed or first time
+        if self.needs_full_redraw or page_changed or layout_changed:
+            self.draw["clear_screen"]()
+            self.app_regions.clear()
+            self.dots_region = None
+            
+            # Draw pagination dots (if more than 1 page)
+            if self.total_pages > 1:
+                self.draw_pagination_dots()
+            
+            # Draw all apps for current page
+            self.draw_all_page_apps(page_apps, start_index, current_layout)
+            
+            self.needs_full_redraw = False
+        elif selection_changed:
+            # Only update the selection (much faster)
+            self.update_selection_only(page_apps, start_index, current_layout)
+        
+        # Update tracking variables
+        self.last_page = self.current_page
+        self.last_selection = self.selection
+        self.last_layout = current_layout
+    
+    def calculate_layout(self, page_apps):
+        """Calculate layout parameters"""
+        # Get icon dimensions
         test_icon = page_apps[0].get("icon_normal") or page_apps[0].get("icon_selected")
         icon_w, icon_h = test_icon.size
         padding = 4
-
-        # Dynamically calculate best number of columns for current page
+        
+        # Calculate grid
+        dots_width = 0
+        available_width = 128 - dots_width
         max_cols = max(1, available_width // (icon_w + padding))
         page_app_count = len(page_apps)
         cols = min(page_app_count, max_cols)
-        rows = (page_app_count + cols - 1) // cols  # ceil division
+        rows = (page_app_count + cols - 1) // cols
 
         total_grid_w = cols * (icon_w + padding) - padding
         total_grid_h = rows * (icon_h + padding) - padding
 
         x_offset = dots_width + (available_width - total_grid_w) // 2
         y_offset = (64 - total_grid_h) // 2
-
-        # Draw apps for current page
+        
+        return {
+            'icon_w': icon_w, 'icon_h': icon_h, 'padding': padding,
+            'cols': cols, 'rows': rows,
+            'x_offset': x_offset, 'y_offset': y_offset,
+            'page_app_count': page_app_count
+        }
+    
+    def draw_all_page_apps(self, page_apps, start_index, layout):
+        """Draw all apps for the current page"""
         for page_index, app in enumerate(page_apps):
             global_index = start_index + page_index
-            col = page_index % cols
-            row = page_index // cols
+            col = page_index % layout['cols']
+            row = page_index // layout['cols']
 
-            x = x_offset + col * (icon_w + padding)
-            y = y_offset + row * (icon_h + padding)
+            x = layout['x_offset'] + col * (layout['icon_w'] + layout['padding'])
+            y = layout['y_offset'] + row * (layout['icon_h'] + layout['padding'])
 
-            self.draw_app(global_index, app, x, y)
+            self.draw_app(global_index, app, x, y, layout)
+    
+    def update_selection_only(self, page_apps, start_index, layout):
+        """Efficiently update only the selection change"""
+        # Find old and new selected app positions on current page
+        old_page_index = self.last_selection - start_index if start_index <= self.last_selection < start_index + len(page_apps) else -1
+        new_page_index = self.selection - start_index if start_index <= self.selection < start_index + len(page_apps) else -1
+        
+        # Clear and redraw old selection (if it was on this page)
+        if 0 <= old_page_index < len(page_apps):
+            app = page_apps[old_page_index]
+            global_index = start_index + old_page_index
+            col = old_page_index % layout['cols']
+            row = old_page_index // layout['cols']
+            x = layout['x_offset'] + col * (layout['icon_w'] + layout['padding'])
+            y = layout['y_offset'] + row * (layout['icon_h'] + layout['padding'])
+            
+            # Clear the old icon area and redraw as unselected
+            self.draw["clear_area"](x, y, layout['icon_w'], layout['icon_h'])
+            self.draw_app(global_index, app, x, y, layout)
+        
+        # Draw new selection (if it's on this page)
+        if 0 <= new_page_index < len(page_apps):
+            app = page_apps[new_page_index]
+            global_index = start_index + new_page_index
+            col = new_page_index % layout['cols']
+            row = new_page_index // layout['cols']
+            x = layout['x_offset'] + col * (layout['icon_w'] + layout['padding'])
+            y = layout['y_offset'] + row * (layout['icon_h'] + layout['padding'])
+            
+            # Clear the area and redraw as selected
+            self.draw["clear_area"](x, y, layout['icon_w'], layout['icon_h'])
+            self.draw_app(global_index, app, x, y, layout)
     
     def draw_pagination_dots(self):
-        """Draw pagination dots on the left side"""
+        """Draw pagination dots on the left side using region-based drawing"""
         if self.total_pages <= 1:
             return
             
         # Calculate dot positioning
-        dot_size_x = 0  # Slightly larger for better visibility
-        dot_size_x_selected = 1  # Slightly larger for better visibility
+        dot_size_x = 1  # Slightly larger for better visibility
+        dot_size_x_selected = 2  # Slightly larger for better visibility
         dot_size_y = 3  # Slightly larger for better visibility
         dot_spacing = 3
         total_dots_height = self.total_pages * dot_size_y + (self.total_pages - 1) * dot_spacing
         start_y = (64 - total_dots_height) // 2
         dot_x = 0
+        
+        # Track the entire dots region for clearing
+        self.dots_region = (dot_x, start_y, dot_size_x_selected, total_dots_height)
         
         # Draw each dot
         for page in range(self.total_pages):
@@ -120,22 +220,26 @@ class App(AppBase):
 
             # Current page dot is filled, others are outlined
             if page == self.current_page:
-                self.display_queue.put(("draw_base_area", dot_x, y, dot_size_x_selected, dot_size_y, 255))
+                self.draw["draw_area"](dot_x, y, dot_size_x_selected, dot_size_y, 255)
             else:
-                self.display_queue.put(("draw_base_area", dot_x, y, dot_size_x, dot_size_y, 255))
+                self.draw["draw_area"](dot_x, y, dot_size_x, dot_size_y, 255)
 
-    def draw_app(self, index, app, x, y):
+    def draw_app(self, index, app, x, y, layout):
+        """Draw an app icon using region-based drawing"""
+        # Store the region for this app
+        self.app_regions[index] = (x, y, layout['icon_w'], layout['icon_h'])
+        
         if index == self.selection:
             icon = app.get("icon_selected")
         else:
             icon = app.get("icon_normal")
 
         if icon:
-            self.display_queue.put(("draw_base_image", icon, x, y))
+            self.draw["draw_image"](icon, x, y)
 
 
     def update(self):
-        # Only redraw when necessary
+        # Only redraw when necessary - the new system is much more efficient
         if self.needs_redraw:
             self.drawAllApps()
             self.needs_redraw = False
@@ -203,6 +307,7 @@ class App(AppBase):
                 max_selection = self.current_page * self.apps_per_page + prev_page_apps - 1
                 self.selection = min(target_selection, max_selection)
                 self.needs_redraw = True
+                self.needs_full_redraw = True  # Page change requires full redraw
     
     def navigate_down(self):
         """Navigate down in the grid layout"""
@@ -246,6 +351,7 @@ class App(AppBase):
                 max_selection = self.current_page * self.apps_per_page + next_page_apps - 1
                 self.selection = min(target_selection, max_selection)
                 self.needs_redraw = True
+                self.needs_full_redraw = True  # Page change requires full redraw
     
     def get_current_page_cols(self):
         """Get number of columns for current page layout"""
@@ -278,6 +384,7 @@ class App(AppBase):
         new_page = self.selection // self.apps_per_page
         if new_page != self.current_page:
             self.current_page = new_page
+            self.needs_full_redraw = True  # Page change requires full redraw
     
     def get_apps_on_page(self, page):
         """Get number of apps on a specific page"""
@@ -316,8 +423,11 @@ class App(AppBase):
         """Refresh the apps list (clears cache to reload from preferences)"""
         self.valid_apps = []
         self.app_count = 0
-        # Recalculate everything
+        # Recalculate everything - force full redraw
         self.needs_redraw = True
+        self.needs_full_redraw = True
+        self.app_regions.clear()
+        self.dots_region = None
                 
     def get_selected_app(self):
         valid_apps = self.get_valid_apps()
