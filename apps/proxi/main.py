@@ -114,6 +114,20 @@ class App(AppBase):
             cursor_height = 6
             self.draw["draw_overlay_area"](x, y-1, cursor_width, cursor_height, 255)
 
+    def draw_help_text(self, content_y, wrapped_lines, font_small, line_height, has_suggestion, suggestion_y=None):
+        """Draw help text at the bottom of the screen"""
+        if has_suggestion:
+            help_text = "ALT: Accept  ENTER: Speak"
+            help_y = max(content_y + len(wrapped_lines) * line_height + 8, suggestion_y + 8)
+        else:
+            help_text = "ENTER: Speak"
+            help_y = content_y + len(wrapped_lines) * line_height + 8
+        
+        if help_y + line_height <= self.height - 2:
+            help_width = self.context["get_text_size"](help_text, font_small)[0]
+            help_x = (self.width - help_width) // 2
+            self.draw["draw_text"](help_text, help_x, help_y, font_small, 255)
+
     def get_autocomplete_suggestion(self, current_text):
         if not current_text or current_text.endswith(' '):
             return ""
@@ -214,12 +228,10 @@ class App(AppBase):
                         self.draw_highlighted_text(segments, suggestion_x, suggestion_y, font_small)
                         
                         # Draw help text below everything
-                        help_text = "TAB: Accept  ENTER: Speak"
-                        help_y = max(content_y + len(wrapped_lines) * line_height + 8, suggestion_y + 8)
-                        if help_y + line_height <= self.height - 2:
-                            help_width = self.context["get_text_size"](help_text, font_small)[0]
-                            help_x = (self.width - help_width) // 2
-                            self.draw["draw_text"](help_text, help_x, help_y, font_small, 255)
+                        self.draw_help_text(content_y, wrapped_lines, font_small, line_height, True, suggestion_y)
+                    else:
+                        # No suggestion available, but still show help text without TAB
+                        self.draw_help_text(content_y, wrapped_lines, font_small, line_height, False)
                     
                     # Draw cursor at end of typed text
                     self.draw_cursor(self.cursor_x, self.cursor_y)
@@ -228,6 +240,10 @@ class App(AppBase):
                     self.cursor_x = self.padding
                     self.cursor_y = content_y
                     self.draw_cursor(self.cursor_x, self.cursor_y)
+                    
+                    # Show help text even when no input
+                    wrapped_lines = [""]  # Empty line for positioning
+                    self.draw_help_text(content_y, wrapped_lines, font_small, 6, False)
             else:
                 # Regular content display (like "Ready" message)
                 lines = self.wrap_text(content, font_small, self.width - self.padding * 2)
@@ -286,7 +302,7 @@ class App(AppBase):
         self.cursor_visible = True
         self.cursor_blink_timer = time.time()
         
-        self.draw_interface("Ready", "Ready for input! Start typing to see suggestions. Press [TAB] to autocomplete and [ESC] to return to launcher.")
+        self.draw_interface("Ready", "Start typing to see suggestions. Press [ESC] to return to launcher.")
 
     def update(self):
         """Handle cursor blinking and periodic updates"""
@@ -307,7 +323,7 @@ class App(AppBase):
             self.draw_interface("Launcher", "Switching to Launcher...")
             self.context["app_manager"].swap_app_async("proxi", "launcher", update_rate_hz=20.0, delay=0.1)
         
-        if keycode == 'KEY_TAB' or keycode == 'KEY_ALT':
+        if keycode == 'KEY_TAB' or keycode == 'KEY_RIGHTALT' or keycode == 'KEY_LEFTALT':
             suggestion = self.get_autocomplete_suggestion(self.currentline)
             if suggestion:
                 self.currentline += suggestion + ' '
