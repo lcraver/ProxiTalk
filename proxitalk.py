@@ -601,25 +601,133 @@ fontSmall = ImageFont.truetype(FONT_SMALL_PATH, 4)
 # --- Render composite display --- #
 # Track if display needs updating to avoid unnecessary redraws
 display_dirty = True
+# Track dirty regions for partial updates
+dirty_regions = []
 
-def update_display(force=False):
-    global display_dirty
-    if not display_dirty and not force:
+class DirtyRegion:
+    def __init__(self, x, y, width, height):
+        self.x = max(0, min(x, 128))  # Screen width is 128
+        self.y = max(0, min(y, 64))   # Screen height is 64
+        self.width = max(0, min(width, 128 - self.x))
+        self.height = max(0, min(height, 64 - self.y))
+    
+    def intersects(self, other):
+        """Check if this region intersects with another"""
+        return not (self.x + self.width <= other.x or 
+                   other.x + other.width <= self.x or
+                   self.y + self.height <= other.y or 
+                   other.y + other.height <= self.y)
+    
+    def merge(self, other):
+        """Merge this region with another, returning a new region"""
+        left = min(self.x, other.x)
+        top = min(self.y, other.y) 
+        right = max(self.x + self.width, other.x + other.width)
+        bottom = max(self.y + self.height, other.y + other.height)
+        return DirtyRegion(left, top, right - left, bottom - top)
+
+def add_dirty_region(x, y, width, height):
+    """Add a dirty region, merging with overlapping regions"""
+    global dirty_regions
+    new_region = DirtyRegion(x, y, width, height)
+    
+    # Find overlapping regions and merge them
+    merged_regions = []
+    for region in dirty_regions:
+        if new_region.intersects(region):
+            new_region = new_region.merge(region)
+        else:
+            merged_regions.append(region)
+    
+    merged_regions.append(new_region)
+    dirty_regions = merged_regions
+
+def update_display(force=False, region=None):
+    """Update display with optional region-based updates"""
+    global display_dirty, dirty_regions
+    
+    if region:
+        # Add specific region to dirty list
+        add_dirty_region(region[0], region[1], region[2], region[3])
+    
+    if not display_dirty and not dirty_regions and not force:
         return
         
     with draw_lock:
-        composite_layer.paste(base_layer)
-        composite_layer.paste(base_layer_2, (0, 0), base_layer_2)
-        composite_layer.paste(overlay_layer, (0, 0), overlay_layer)
-        disp.image(composite_layer)
-        disp.show()
+        if force or not dirty_regions:
+            # Full screen update
+            composite_layer.paste(base_layer)
+            composite_layer.paste(base_layer_2, (0, 0), base_layer_2)
+            composite_layer.paste(overlay_layer, (0, 0), overlay_layer)
+            disp.image(composite_layer)
+            disp.show()
+            dirty_regions = []
+        else:
+            # Update only dirty regions
+            for region in dirty_regions:
+                # Extract region from each layer
+                base_region = base_layer.crop((region.x, region.y, 
+                                             region.x + region.width, 
+                                             region.y + region.height))
+                base2_region = base_layer_2.crop((region.x, region.y,
+                                                region.x + region.width,
+                                                region.y + region.height))
+                overlay_region = overlay_layer.crop((region.x, region.y,
+                                                   region.x + region.width,
+                                                   region.y + region.height))
+                
+                # Composite the region
+                temp_region = Image.new("1", (region.width, region.height))
+                temp_region.paste(base_region)
+                temp_region.paste(base2_region, (0, 0), base2_region)
+                temp_region.paste(overlay_region, (0, 0), overlay_region)
+                
+                # Paste back to composite layer
+                composite_layer.paste(temp_region, (region.x, region.y))
+            
+            # Send full composite to display (hardware limitation)
+            disp.image(composite_layer)
+            disp.show()
+            dirty_regions = []
+        
         display_dirty = False
 
-def mark_display_dirty():
+def mark_display_dirty(x=None, y=None, width=None, height=None):
+    """Mark display as dirty, optionally with specific region"""
     global display_dirty
     display_dirty = True
+    if x is not None and y is not None and width is not None and height is not None:
+        add_dirty_region(x, y, width, height)
 
-# --- Display Functions (modified to use layers) --- #
+# --- Display Functions (modified to use layers and region updates) --- #
+
+# REGION-BASED DRAWING SYSTEM USAGE:
+# 
+# The display system now supports efficient partial screen updates. Here's how to use it:
+#
+# 1. BASIC DRAWING (automatically marks regions dirty):
+#    - context["drawing"]["draw_text"](text, x, y, font, fill)
+#    - context["drawing"]["draw_image"](img, x, y) 
+#    - context["drawing"]["draw_area"](x, y, width, height, fill)
+#
+# 2. OVERLAY DRAWING (for temporary/dynamic content):
+#    - context["drawing"]["draw_overlay_text"](text, x, y, font, fill)
+#    - context["drawing"]["draw_overlay_image"](img, x, y)
+#    - context["drawing"]["draw_overlay_area"](x, y, width, height, fill)
+#
+# 3. CLEARING REGIONS:
+#    - context["drawing"]["clear_area"](x, y, width, height)
+#    - context["drawing"]["clear_overlay_area"](x, y, width, height)
+#
+# 4. MANUAL REGION UPDATES (for advanced usage):
+#    - context["drawing"]["mark_dirty"](x, y, width, height)
+#    - context["drawing"]["update_region"](x, y, width, height)
+#
+# PERFORMANCE TIPS:
+# - Use overlay layer for frequently changing content (cursors, animations)
+# - Use base layer for static content (text, backgrounds) 
+# - Group nearby changes to reduce the number of dirty regions
+# - Only update regions that actually changed
 
 # Wrap text to fit screen width with caching
 _text_wrap_cache = {}
@@ -710,7 +818,9 @@ def display_set_screen(title, text):
 def display_draw_text(layer, font, text, x=0, y=0, fill=255):
     with draw_lock:
         layer.text((x, y), text, font=font, fill=fill)
-        mark_display_dirty()
+        # Calculate text dimensions for dirty region
+        text_width, text_height = get_text_size(text, font)
+        mark_display_dirty(x, y, text_width, text_height)
 
 def display_draw_icon(layer, icon_img, x=0, y=height - 8):
     with draw_lock:
@@ -719,12 +829,13 @@ def display_draw_icon(layer, icon_img, x=0, y=height - 8):
             icon_img = icon_img.convert("1")
         if icon_img:
             layer.paste(icon_img, (x, y), icon_img)
-        mark_display_dirty()
+            # Mark icon area as dirty
+            mark_display_dirty(x, y, icon_img.width, icon_img.height)
         
 def display_draw_area(layer, x=0, y=0, width=128, height=64, fill=255):
     with draw_lock:
         layer.rectangle((x, y, x + width, y + height), fill=fill)
-        mark_display_dirty()
+        mark_display_dirty(x, y, width, height)
 
 def display_draw_blinking_cursor(x, y, isOn):
     global current_app_cursor_enabled, cursor_state_changed, last_cursor_visible_state, prevDrawX, prevDrawY
@@ -736,6 +847,7 @@ def display_draw_blinking_cursor(x, y, isOn):
         if (int(x) != int(prevDrawX) or int(y) != int(prevDrawY)) and cursor_should_be_visible:
             # Clear old cursor position
             base_draw_2.rectangle((int(prevDrawX)+2, int(prevDrawY), int(prevDrawX)+3, int(prevDrawY)+cursor_height), fill=0)
+            mark_display_dirty(int(prevDrawX)+2, int(prevDrawY), 1, cursor_height)
             prevDrawX = x
             prevDrawY = y
         
@@ -748,14 +860,14 @@ def display_draw_blinking_cursor(x, y, isOn):
                 # Clear cursor area when disabled
                 base_draw_2.rectangle((int(x) + 1, int(y), int(x) + 1 + cursor_width, int(y) + cursor_height), fill=0)
             
+            mark_display_dirty(int(x) + 1, int(y), cursor_width, cursor_height)
             last_cursor_visible_state = cursor_should_be_visible
             cursor_state_changed = False
-            mark_display_dirty()
         elif cursor_should_be_visible:
             # Only blink if cursor is visible
             color = 255 if isOn else 0
             base_draw_2.rectangle((int(x) + 1, int(y), int(x) + 1 + cursor_width, int(y) + cursor_height), fill=color)
-            mark_display_dirty()
+            mark_display_dirty(int(x) + 1, int(y), cursor_width, cursor_height)
 
 def set_cursor_enabled(enabled):
     """Enable or disable cursor globally"""
@@ -795,10 +907,11 @@ def clear_cursor_area():
     with draw_lock:
         # Clear current cursor position
         base_draw_2.rectangle((int(lastDrawX)+1, int(lastDrawY), int(lastDrawX)+1+cursor_width, int(lastDrawY)+cursor_height), fill=0)
+        mark_display_dirty(int(lastDrawX)+1, int(lastDrawY), cursor_width, cursor_height)
         # Clear previous cursor position if different
         if prevDrawX != lastDrawX or prevDrawY != lastDrawY:
             base_draw_2.rectangle((int(prevDrawX)+1, int(prevDrawY), int(prevDrawX)+1+cursor_width, int(prevDrawY)+cursor_height), fill=0)
-        mark_display_dirty()
+            mark_display_dirty(int(prevDrawX)+1, int(prevDrawY), cursor_width, cursor_height)
 
 # --- Display Thread --- #
 
@@ -872,6 +985,9 @@ def display_thread_func():
                         set_cursor_position(x, y)
                     case "clear_cursor_area":
                         clear_cursor_area()
+                    case "update_region":
+                        _, x, y, width, height = cmd
+                        update_display(region=(x, y, width, height))
                     case "exit":
                         print("[Display Thread] Exiting on exit command", flush=True)
                         break
@@ -1171,6 +1287,25 @@ def main():
             "set_position": lambda x, y: display_queue.put(("set_cursor_position", x, y)),
             "clear_area": lambda: display_queue.put(("clear_cursor_area",)),
             "clear_layer": lambda: display_queue.put(("clear_base_2",)),  # Clear entire cursor layer
+        },
+        # New region-based drawing functions for apps
+        "drawing": {
+            # Base layer drawing (static content)
+            "draw_text": lambda text, x, y, font=None, fill=255: display_queue.put(("draw_base_text", font or fontSmall, text, x, y, fill)),
+            "draw_image": lambda img, x, y: display_queue.put(("draw_base_image", img, x, y)),
+            "draw_area": lambda x, y, width, height, fill=255: display_queue.put(("draw_base_area", x, y, width, height, fill)),
+            "clear_area": lambda x, y, width, height: display_queue.put(("clear_base_area", x, y, width, height)),
+            "clear_screen": lambda: display_queue.put(("clear_base",)),
+            
+            # Overlay layer drawing (temporary/dynamic content)
+            "draw_overlay_text": lambda text, x, y, font=None, fill=255: display_queue.put(("draw_overlay_text", font or fontSmall, text, x, y, fill)),
+            "draw_overlay_image": lambda img, x, y: display_queue.put(("draw_overlay_image", img, x, y)),
+            "draw_overlay_area": lambda x, y, width, height, fill=255: display_queue.put(("draw_overlay_area", x, y, width, height, fill)),
+            "clear_overlay_area": lambda x, y, width, height: display_queue.put(("clear_overlay_area", x, y, width, height)),
+            
+            # Region-based updates (for efficiency)
+            "update_region": lambda x, y, width, height: display_queue.put(("update_region", x, y, width, height)),
+            "mark_dirty": lambda x, y, width, height: mark_display_dirty(x, y, width, height),
         },
         "get_text_size": get_text_size,
         "hash_text": hash_text,
