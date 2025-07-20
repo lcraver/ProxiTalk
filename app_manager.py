@@ -247,10 +247,10 @@ class AppManager:
         return [name for name, running in self.running_apps.items() if running]
     
     def distribute_event(self, event_name: str, *args, **kwargs) -> None:
-        """Distribute an event to the active app and all overlay applications."""
+        """Distribute an event to the active app and all running overlay applications."""
         # Only send events to:
         # 1. The currently active (non-overlay) app
-        # 2. All overlay apps (which should always receive events)
+        # 2. All overlay apps that are currently running (not just loaded)
         
         apps_to_notify = []
         
@@ -258,9 +258,9 @@ class AppManager:
         if self.active_app and self.active_app in self.loaded_apps:
             apps_to_notify.append(self.active_app)
         
-        # Add all overlay apps
+        # Add only running overlay apps (not just loaded ones)
         for overlay_name in self.overlay_apps:
-            if overlay_name in self.loaded_apps:
+            if overlay_name in self.loaded_apps and self.is_app_running(overlay_name):
                 apps_to_notify.append(overlay_name)
         
         # Send events to selected apps
@@ -282,10 +282,10 @@ class AppManager:
         if self.active_app and self.active_app in self.loaded_apps:
             apps_to_notify.append(f"{self.active_app} (active)")
         
-        # Add all overlay apps
+        # Add only running overlay apps
         for overlay_name in self.overlay_apps:
-            if overlay_name in self.loaded_apps:
-                apps_to_notify.append(f"{overlay_name} (overlay)")
+            if overlay_name in self.loaded_apps and self.is_app_running(overlay_name):
+                apps_to_notify.append(f"{overlay_name} (overlay-running)")
         
         return apps_to_notify
     
@@ -438,3 +438,23 @@ class AppManager:
         # Also directly clear the cursor layer
         if "display_queue" in self.context:
             self.context["display_queue"].put(("clear_base_2",))
+    
+    def sync_overlays_with_preferences(self):
+        """Sync overlay running states with user preferences"""
+        user_prefs = self.context.get("user_preferences")
+        if not user_prefs:
+            print("[AppManager] No user preferences available for overlay sync")
+            return
+            
+        for overlay_name in self.overlay_apps:
+            is_disabled_in_prefs = user_prefs.is_overlay_disabled(overlay_name)
+            is_currently_running = self.is_app_running(overlay_name)
+            
+            if is_disabled_in_prefs and is_currently_running:
+                # Should be disabled but is running - stop it
+                print(f"[AppManager] Syncing: Stopping overlay {overlay_name} (disabled in preferences)")
+                self.stop_app(overlay_name)
+            elif not is_disabled_in_prefs and not is_currently_running:
+                # Should be enabled but is not running - start it
+                print(f"[AppManager] Syncing: Starting overlay {overlay_name} (enabled in preferences)")
+                self.start_app(overlay_name, update_rate_hz=20.0)

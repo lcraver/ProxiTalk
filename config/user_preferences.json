@@ -1,5 +1,5 @@
 {
-  "last_launched_app": "proxi",
+  "last_launched_app": "app_settings",
   "launcher_selection": 0,
   "hidden_apps": [],
   "created_at": "2025-07-14",
@@ -9,5 +9,8 @@
     "code_editor",
     "discourse_chat",
     "proxi"
+  ],
+  "disabled_overlays": [
+    "mori"
   ]
 }

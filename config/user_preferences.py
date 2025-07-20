@@ -32,6 +32,7 @@ class UserPreferences:
             "launcher_selection": 0,
             "hidden_apps": [],
             "pinned_apps": [],
+            "disabled_overlays": [],
         }
     
     def _save_preferences(self) -> bool:
@@ -140,6 +141,40 @@ class UserPreferences:
             return self.unpin_app(app_name)
         else:
             return self.pin_app(app_name)
+    
+    def get_disabled_overlays(self) -> list:
+        """Get list of disabled overlay names"""
+        return self._preferences.get("disabled_overlays", [])
+    
+    def is_overlay_disabled(self, overlay_name: str) -> bool:
+        """Check if an overlay is disabled"""
+        disabled_overlays = self.get_disabled_overlays()
+        return overlay_name in disabled_overlays
+    
+    def disable_overlay(self, overlay_name: str) -> bool:
+        """Disable an overlay"""
+        disabled_overlays = self.get_disabled_overlays()
+        if overlay_name not in disabled_overlays:
+            disabled_overlays.append(overlay_name)
+            self._preferences["disabled_overlays"] = disabled_overlays
+            return self._save_preferences()
+        return True  # Already disabled
+    
+    def enable_overlay(self, overlay_name: str) -> bool:
+        """Enable an overlay"""
+        disabled_overlays = self.get_disabled_overlays()
+        if overlay_name in disabled_overlays:
+            disabled_overlays.remove(overlay_name)
+            self._preferences["disabled_overlays"] = disabled_overlays
+            return self._save_preferences()
+        return True  # Already enabled
+    
+    def toggle_overlay_enabled(self, overlay_name: str) -> bool:
+        """Toggle overlay enabled status"""
+        if self.is_overlay_disabled(overlay_name):
+            return self.enable_overlay(overlay_name)
+        else:
+            return self.disable_overlay(overlay_name)
 
 # Global instance - will be initialized by main app
 user_preferences = None

@@ -1195,8 +1195,13 @@ def main():
     overlay_count = app_manager.load_overlays(apps)
     print(f"[Main] Loaded {overlay_count} overlay apps")
     
-    # Start all loaded overlays
+    # Start all loaded overlays (unless disabled by user)
     for overlay_name in app_manager.overlay_apps:
+        # Check if overlay is disabled in user preferences
+        if user_prefs.is_overlay_disabled(overlay_name):
+            print(f"[Main] Skipping disabled overlay: {overlay_name}")
+            continue
+            
         if app_manager.start_app(overlay_name, update_rate_hz=20.0):
             print(f"[Main] Started overlay: {overlay_name}")
         else:

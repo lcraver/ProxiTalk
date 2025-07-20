@@ -7,14 +7,15 @@ class App(AppBase):
         self.user_prefs = context.get("user_preferences")
         self.selection = 0
         self.all_apps = []
+        self.all_overlays = []
         self.filtered_apps = []
         self.width = context["screen_width"]
         self.scroll_offset = 0
         self.max_visible_items = 7  # Number of apps visible at once
         
         # Tab system
-        self.current_tab = 0  # 0 = Visibility, 1 = Pinned
-        self.tabs = ["Visibility", "Pinned"]
+        self.current_tab = 0  # 0 = Visibility, 1 = Pinned, 2 = Overlays
+        self.tabs = ["Visibility", "Pinned", "Overlays"]
         
         # UI constants
         self.item_height = 7
@@ -29,6 +30,13 @@ class App(AppBase):
     def start(self):
         print("[App Settings] Started")
         self.load_apps()
+        self.load_overlays()
+        
+        # Sync overlay states with preferences when starting
+        app_manager = self.context.get("app_manager")
+        if app_manager and hasattr(app_manager, 'sync_overlays_with_preferences'):
+            app_manager.sync_overlays_with_preferences()
+        
         self.draw_interface()
         
     def load_apps(self):
@@ -56,6 +64,59 @@ class App(AppBase):
         # Sort alphabetically by display name
         self.all_apps.sort(key=lambda x: x['display_name'].lower())
         self.filtered_apps = self.all_apps[:]
+        
+    def load_overlays(self):
+        """Load all overlay apps"""
+        self.all_overlays = []
+        
+        # Get app manager to access overlay apps
+        app_manager = self.context.get("app_manager")
+        if not app_manager or not hasattr(app_manager, 'overlay_apps'):
+            print("[App Settings] No app manager or overlay apps available")
+            return
+        
+        # Load overlay information
+        import os
+        overlay_dir = self.context.get("OVERLAY_DIR")
+        if not overlay_dir or not os.path.exists(overlay_dir):
+            print("[App Settings] Overlay directory not found")
+            return
+            
+        for overlay_name in app_manager.overlay_apps:
+            # Load overlay metadata
+            metadata_path = os.path.join(overlay_dir, overlay_name, "metadata.json")
+            display_name = overlay_name
+            
+            if os.path.isfile(metadata_path):
+                try:
+                    import json
+                    with open(metadata_path, 'r', encoding='utf-8') as f:
+                        metadata = json.load(f)
+                        display_name = metadata.get('name', overlay_name)
+                except Exception as e:
+                    print(f"[App Settings] Error loading metadata for {overlay_name}: {e}")
+            
+            # Check if overlay is disabled in preferences
+            is_disabled = self.user_prefs.is_overlay_disabled(overlay_name) if self.user_prefs else False
+            
+            # Also check current running state to ensure consistency
+            is_currently_running = app_manager.is_app_running(overlay_name)
+            
+            # If preferences say disabled but overlay is running, or vice versa, log the inconsistency
+            if is_disabled and is_currently_running:
+                print(f"[App Settings] Warning: Overlay {overlay_name} is disabled in preferences but currently running")
+            elif not is_disabled and not is_currently_running:
+                print(f"[App Settings] Warning: Overlay {overlay_name} is enabled in preferences but not running")
+            
+            overlay_info = {
+                'name': overlay_name,
+                'display_name': display_name,
+                'disabled': is_disabled
+            }
+            self.all_overlays.append(overlay_info)
+        
+        # Sort alphabetically by display name
+        self.all_overlays.sort(key=lambda x: x['display_name'].lower())
         
     def draw_interface(self):
         """Draw the main interface"""
@@ -99,11 +160,20 @@ class App(AppBase):
         self.display_queue.put(("draw_base_text", font_small, title, title_x, 0, 0))
         
     def draw_app_list(self):
-        """Draw the scrollable list of apps"""
-        if not self.filtered_apps:
-            # Show "No apps found" message
+        """Draw the scrollable list of apps or overlays"""
+        # Choose the appropriate list based on current tab
+        if self.current_tab == 2:  # Overlays tab
+            current_list = self.all_overlays
+        else:  # Apps tabs
+            current_list = self.filtered_apps
+            
+        if not current_list:
+            # Show appropriate "No items found" message
             font_small = self.context["fonts"]["small"]
-            msg = "No apps found"
+            if self.current_tab == 2:
+                msg = "No overlays found"
+            else:
+                msg = "No apps found"
             msg_width = self.context["get_text_size"](msg, font_small)[0]
             msg_x = (128 - msg_width) // 2
             msg_y = self.header_height + 20
@@ -112,11 +182,11 @@ class App(AppBase):
             
         # Calculate visible range
         start_idx = self.scroll_offset
-        end_idx = min(start_idx + self.max_visible_items, len(self.filtered_apps))
+        end_idx = min(start_idx + self.max_visible_items, len(current_list))
         
-        # Draw each visible app
+        # Draw each visible item
         for i in range(start_idx, end_idx):
-            app = self.filtered_apps[i]
+            item = current_list[i]
             y_pos = self.header_height + 1 + (i - start_idx) * self.item_height
             
             # Highlight selected item
@@ -126,36 +196,51 @@ class App(AppBase):
             else:
                 text_color = 255  # White text on black background
                 
-            # Draw app name
+            # Draw item name
             font_small = self.context["fonts"]["small"]
-            app_name = app['display_name']
+            item_name = item['display_name']
             
             # Truncate name if too long
             max_name_width = 80
-            if self.context["get_text_size"](app_name, font_small)[0] > max_name_width:
-                while len(app_name) > 1 and self.context["get_text_size"](app_name + "...", font_small)[0] > max_name_width:
-                    app_name = app_name[:-1]
-                app_name += "..."
+            if self.context["get_text_size"](item_name, font_small)[0] > max_name_width:
+                while len(item_name) > 1 and self.context["get_text_size"](item_name + "...", font_small)[0] > max_name_width:
+                    item_name = item_name[:-1]
+                item_name += "..."
             
-            self.display_queue.put(("draw_base_text", font_small, app_name, 2, y_pos, text_color))
+            self.display_queue.put(("draw_base_text", font_small, item_name, 2, y_pos, text_color))
             
-            # Draw visibility or pinned status based on current tab
+            # Draw status based on current tab
             if self.current_tab == 0:  # Visibility tab
-                status = "Hidden" if app['hidden'] else "Visible"
-            else:  # Pinned tab
-                status = "Pinned" if app['pinned'] else "Not Pinned"
+                status = "Hidden" if item['hidden'] else "Visible"
+            elif self.current_tab == 1:  # Pinned tab
+                status = "Pinned" if item['pinned'] else "Not Pinned"
+            else:  # Overlays tab
+                # Show both disabled state and running state for overlays
+                if item['disabled']:
+                    status = "Disabled"
+                else:
+                    # Check if the overlay is actually running
+                    app_manager = self.context.get("app_manager")
+                    is_running = app_manager.is_app_running(item['name']) if app_manager else False
+                    status = "Running" if is_running else "Stopped"
                 
             status_width = self.context["get_text_size"](status, font_small)[0]
             status_x = 128 - status_width - 2 - 3
             self.display_queue.put(("draw_base_text", font_small, status, status_x, y_pos, text_color))
             
         # Draw scroll indicators if needed
-        if len(self.filtered_apps) > self.max_visible_items:
+        if len(current_list) > self.max_visible_items:
             self.draw_scroll_indicators()
             
     def draw_scroll_indicators(self):
         """Draw scroll indicators similar to discourse_chat"""
-        if len(self.filtered_apps) <= self.max_visible_items:
+        # Choose the appropriate list based on current tab
+        if self.current_tab == 2:  # Overlays tab
+            current_list = self.all_overlays
+        else:  # Apps tabs
+            current_list = self.filtered_apps
+            
+        if len(current_list) <= self.max_visible_items:
             return  # No need for scrollbar if all items fit
             
         # Calculate scrollbar dimensions
@@ -165,7 +250,7 @@ class App(AppBase):
         scrollbar_height = scrollbar_bottom - scrollbar_top
         
         # Calculate scroll position
-        max_scroll = max(0, len(self.filtered_apps) - self.max_visible_items)
+        max_scroll = max(0, len(current_list) - self.max_visible_items)
         if max_scroll > 0:
             # Calculate the position of the scroll indicator
             scroll_ratio = self.scroll_offset / max_scroll
@@ -192,7 +277,9 @@ class App(AppBase):
         # Instructions based on current tab
         if self.current_tab == 0:  # Visibility tab
             instructions = "Up/Down: Select  Space: Toggle"
-        else:  # Pinned tab
+        elif self.current_tab == 1:  # Pinned tab
+            instructions = "Up/Down: Select  Space: Toggle"
+        else:  # Overlays tab
             instructions = "Up/Down: Select  Space: Toggle"
 
         inst_width = self.context["get_text_size"](instructions, font_small)[0]
@@ -201,8 +288,10 @@ class App(AppBase):
         if inst_width > 126:
             if self.current_tab == 0:
                 instructions = "↑↓: Select  Space: Toggle  ←→: Tab"
-            else:
+            elif self.current_tab == 1:
                 instructions = "↑↓: Select  Space: Pin  ←→: Tab"
+            else:  # Overlays tab
+                instructions = "↑↓: Select  Space: Toggle  T: Debug"
             inst_width = self.context["get_text_size"](instructions, font_small)[0]
             
         inst_x = (128 - inst_width) // 2
@@ -210,13 +299,26 @@ class App(AppBase):
         
     def update_scroll(self):
         """Update scroll offset to keep selection visible"""
+        # Choose the appropriate list based on current tab
+        if self.current_tab == 2:  # Overlays tab
+            current_list = self.all_overlays
+        else:  # Apps tabs
+            current_list = self.filtered_apps
+            
         if self.selection < self.scroll_offset:
             self.scroll_offset = self.selection
         elif self.selection >= self.scroll_offset + self.max_visible_items:
             self.scroll_offset = self.selection - self.max_visible_items + 1
             
     def toggle_app_visibility(self):
-        """Toggle visibility or pinned status of the selected app based on current tab"""
+        """Toggle visibility, pinned status, or overlay status based on current tab"""
+        if self.current_tab == 2:  # Overlays tab
+            self.toggle_overlay_status()
+        else:  # Apps tabs
+            self.toggle_app_status()
+            
+    def toggle_app_status(self):
+        """Toggle visibility or pinned status of the selected app"""
         if not self.filtered_apps or self.selection >= len(self.filtered_apps):
             return
             
@@ -262,6 +364,52 @@ class App(AppBase):
                     # Redraw will happen in update() method
                 else:
                     print(f"[App Settings] Failed to toggle pinned status for {app_name}")
+    
+    def toggle_overlay_status(self):
+        """Toggle enabled/disabled status of the selected overlay"""
+        if not self.all_overlays or self.selection >= len(self.all_overlays):
+            return
+            
+        overlay = self.all_overlays[self.selection]
+        overlay_name = overlay['name']
+        
+        if self.user_prefs:
+            # Toggle overlay enabled status in preferences
+            success = self.user_prefs.toggle_overlay_enabled(overlay_name)
+            if success:
+                # Update local state
+                overlay['disabled'] = not overlay['disabled']
+                print(f"[App Settings] Toggled {overlay_name} status to {'disabled' if overlay['disabled'] else 'enabled'}")
+                
+                # Start or stop the overlay based on new status
+                app_manager = self.context.get("app_manager")
+                if app_manager:
+                    is_currently_running = app_manager.is_app_running(overlay_name)
+                    
+                    if overlay['disabled']:
+                        # Stop the overlay if it's running
+                        if is_currently_running:
+                            if app_manager.stop_app(overlay_name):
+                                print(f"[App Settings] Stopped overlay: {overlay_name}")
+                            else:
+                                print(f"[App Settings] Failed to stop overlay: {overlay_name}")
+                        else:
+                            print(f"[App Settings] Overlay {overlay_name} was already stopped")
+                    else:
+                        # Start the overlay if it's not running
+                        if not is_currently_running:
+                            if app_manager.start_app(overlay_name, update_rate_hz=20.0):
+                                print(f"[App Settings] Started overlay: {overlay_name}")
+                            else:
+                                print(f"[App Settings] Failed to start overlay: {overlay_name}")
+                        else:
+                            print(f"[App Settings] Overlay {overlay_name} was already running")
+                else:
+                    print("[App Settings] No app manager available")
+                
+                # Redraw will happen in update() method
+            else:
+                print(f"[App Settings] Failed to toggle status for overlay {overlay_name}")
                 
     def update(self):
         # Only redraw when necessary
@@ -274,12 +422,24 @@ class App(AppBase):
         self.needs_redraw = True
         
         if keycode == "KEY_UP" or keycode == "KEY_W":
-            if self.filtered_apps and self.selection > 0:
+            # Choose the appropriate list based on current tab
+            if self.current_tab == 2:  # Overlays tab
+                current_list = self.all_overlays
+            else:  # Apps tabs
+                current_list = self.filtered_apps
+                
+            if current_list and self.selection > 0:
                 self.selection -= 1
                 self.update_scroll()
                 
         elif keycode == "KEY_DOWN" or keycode == "KEY_S":
-            if self.filtered_apps and self.selection < len(self.filtered_apps) - 1:
+            # Choose the appropriate list based on current tab
+            if self.current_tab == 2:  # Overlays tab
+                current_list = self.all_overlays
+            else:  # Apps tabs
+                current_list = self.filtered_apps
+                
+            if current_list and self.selection < len(current_list) - 1:
                 self.selection += 1
                 self.update_scroll()
                 
@@ -299,16 +459,41 @@ class App(AppBase):
             )
             
         elif keycode == "KEY_R":
-            # Refresh app list
+            # Refresh app list and sync overlays
             self.load_apps()
+            self.load_overlays()
+            
+            # Also sync overlay states with preferences
+            app_manager = self.context.get("app_manager")
+            if app_manager and hasattr(app_manager, 'sync_overlays_with_preferences'):
+                app_manager.sync_overlays_with_preferences()
+            
             self.selection = 0
             self.scroll_offset = 0
+            
+        elif keycode == "KEY_T":
+            # Debug: Print overlay status information
+            if self.current_tab == 2:  # Only on overlays tab
+                app_manager = self.context.get("app_manager")
+                if app_manager:
+                    print("\n[App Settings] Overlay Status Debug:")
+                    for overlay in self.all_overlays:
+                        overlay_name = overlay['name']
+                        is_running = app_manager.is_app_running(overlay_name)
+                        is_disabled = overlay['disabled']
+                        print(f"  {overlay_name}: disabled={is_disabled}, running={is_running}")
+                    
+                    print(f"\nApps receiving events: {app_manager.get_event_receiving_apps()}")
+                    print("") # Empty line for readability
             
     def switch_tab(self, direction):
         """Switch to next or previous tab"""
         new_tab = self.current_tab + direction
         if 0 <= new_tab < len(self.tabs):
             self.current_tab = new_tab
+            # Reset selection and scroll when switching tabs
+            self.selection = 0
+            self.scroll_offset = 0
             # Redraw will happen in update() method
             
     def stop(self):
