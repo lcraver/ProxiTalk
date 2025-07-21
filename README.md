@@ -5,27 +5,39 @@ ProxiTalk is a custom operating system designed for the ProxiTalk "platform", wh
 
 # Apps Included
 
-## ![Launcher Icon](assets/icons/settings.png) Launcher
-Used to launch apps can be customized to the user's liking.
+## ![Launcher Icon](apps/app_settings/icon.png) Launcher
+Used to launch apps and can be customized to the user's liking.
 
-## ![Info Icon](apps/info/icon.png) Info
-Test app for ProxiTalk for those that want a basic app to test with.
+## ![App Settings Icon](apps/app_settings/icon.png) App Settings
+Manage app visibility settings and customize which apps appear in the launcher.
 
-## ![ProxiTalk Icon](apps/proxi/icon.png) ProxiTalk
-The main app for ProxiTalk, used for realtime TTS.
+## ![Calendar Icon](apps/calendar/icon.png) Calendar [WIP]
+Monthly calendar view for tracking dates and events.
 
 ## ![Clock Icon](apps/clock/icon.png) Clock
-A clock app for ProxiTalk.
+A clock app for ProxiTalk with timer functionality.
+
+## ![Code Editor Icon](apps/code_editor/icon.png) Code Editor
+Text editor for writing and editing files on device.
+
+## ![Discourse Chat Icon](apps/discourse_chat/icon.png) Discourse Chat
+Chat application for communicating through Discourse forums.
 
 ## ![Hebi Icon](apps/hebi/icon.png) Hebi
 The classic arcade game now on ProxiTalk~
+
+## ![ProxiTalk Icon](apps/proxi/icon.png) ProxiTalk
+The main app for ProxiTalk, used for realtime TTS.
 
 ## ![Tetra Icon](apps/tetra/icon.png) Tetra
 The classic puzzle game now on ProxiTalk~
 
 # Overlays Included
 
-## ![Overlay Settings Icon](apps/overlay_settings/icon.png) Settings
+## ![Life Countdown Icon](apps/app_settings/icon.png) Life Countdown
+A life countdown overlay that displays approximate seconds remaining for you to live. Can be turned off in app settings if you want less existential dread.
+
+## ![Settings Overlay Icon](apps/app_settings/icon.png) Settings
 Configure screen brightness, volume, and more without leaving the app you're in.
 
 ---
@@ -73,12 +85,11 @@ class App(AppBase):
     def __init__(self, context):
         """Initialize the app with context"""
         super().__init__(context)
-        self.display_queue = context["display_queue"]  # Display commands
         
     def start(self):
         """Called when the app starts"""
-        # Set a simple text screen
-        self.display_queue.put(("set_screen", "My App", "Hello, ProxiTalk!"))
+        # Set a simple text screen using the built-in method
+        self.set_screen("My App", "Hello, ProxiTalk!")
         
     def update(self):
         """Called every frame (20fps/hz by default)"""
@@ -87,29 +98,49 @@ class App(AppBase):
         
     def onkeydown(self, keycode):
         """Handle key press events"""
-        # Handle key press events if needed
         if keycode == "KEY_ESC":
             # Return to launcher
             self.context["app_manager"].swap_app_async(
                 "your_app_name", "launcher", update_rate_hz=20.0, delay=0.1
             )
         elif keycode == "KEY_SPACE":
-            self.display_queue.put(("set_screen", "My App", "Space pressed!"))
+            self.set_screen("My App", "Space pressed!")
             
     def onkeyup(self, keycode):
         """Handle key release events"""
-        # Handle key release events if needed
         pass
         
     def stop(self):
         """Called when the app stops"""
-        # Cleanup state or io if needed 
+        # Cleanup state or resources if needed 
         pass
 ```
 
-### Advanced Graphics with PIL
+### Drawing Methods
 
-For custom graphics, create PIL images and send them to the display:
+ProxiTalk provides several built-in methods for displaying content:
+
+#### High-Level Screen Methods
+
+```python
+# Simple text screen with title and body
+self.set_screen("Title", "Body text content")
+
+self.set_screen_with_cursor("Editor", "Type here: [highlighted text]")
+
+# Temporary message screen
+self.show_message("Success", "File saved!", duration=2)
+
+# Error screen
+self.show_error("File not found")
+
+# Loading screen
+self.show_loading("Processing...")
+```
+
+#### Low-Level Drawing with Context Methods
+
+For custom graphics, you can use the context drawing methods:
 
 ```python
 def draw_custom_screen(self):
@@ -121,13 +152,13 @@ def draw_custom_screen(self):
     draw.rectangle([10, 10, 50, 30], fill=1)  # White rectangle
     draw.ellipse([60, 20, 80, 40], outline=1)  # White circle outline
     
-    # Draw text
-    font = self.fonts["default"]
+    # Draw text on the image
+    font = self.context["fonts"]["small"]
     draw.text((10, 45), "Hello World!", font=font, fill=1)
     
-    # Send to display
-    self.display_queue.put(("clear_base",))
-    self.display_queue.put(("draw_base_image", img, 0, 0))
+    # Clear display and draw the image
+    self.context["drawing"]["clear_screen"]()
+    self.context["drawing"]["draw_image"](img, 0, 0)
 ```
 
 ### Key Codes
@@ -141,35 +172,66 @@ While you can use almost all standard key codes, here are some commonly used one
 - `KEY_P` - P key (commonly used for pause)
 - `KEY_R` - R key (commonly used for restart)
 
-### Display Commands
+### Drawing Commands
 
-Send commands to the display using `self.display_queue.put()`:
+Use the context drawing methods for efficient rendering:
 
+#### Basic Drawing Commands
 ```python
-# Simple text screen
-self.display_queue.put(("set_screen", "Title", "Message text"))
-
 # Clear the display
-self.display_queue.put(("clear_base",))
+self.context["drawing"]["clear_screen"]()
 
 # Draw a PIL image at position (x, y)
-self.display_queue.put(("draw_base_image", img, x, y))
+self.context["drawing"]["draw_image"](img, x, y)
 
 # Draw text directly
-self.display_queue.put(("draw_text", x, y, "text", font, fill))
+self.context["drawing"]["draw_text"]("text", x, y, font)
+# Or with custom fill color
+self.context["drawing"]["draw_text"]("text", x, y, font, fill=255)
+
+# Clear a specific area
+self.context["drawing"]["clear_area"](x, y, width, height)
+
+# Draw a filled area
+self.context["drawing"]["draw_area"](x, y, width, height, fill=255)
 ```
+
+#### Overlay Commands (for overlays and temporary content)
+```python
+# Draw on the overlay layer (appears on top of apps)
+self.context["drawing"]["draw_overlay_text"]("text", x, y, font)
+self.context["drawing"]["draw_overlay_image"](img, x, y)
+self.context["drawing"]["clear_overlay_area"](x, y, width, height)
+self.context["drawing"]["draw_overlay_area"](x, y, width, height, fill=255)
+```
+
+#### Performance Optimization
+```python
+# Batch multiple drawing operations for better performance
+self.context["drawing"]["begin_batch"]()
+self.context["drawing"]["draw_text"]("Player 1", 10, 10)
+self.context["drawing"]["draw_text"]("Score: 100", 10, 20)
+self.context["drawing"]["draw_area"](50, 50, 10, 10, fill=255)
+self.context["drawing"]["end_batch"]()  # All drawing happens at once
+```
+
+#### Text Features
+The built-in `set_screen()` method supports:
+- Automatic text wrapping
+- Highlighted text using `[brackets]`
+- Proper spacing and layout
 
 ### Audio and TTS
 
 ```python
 # Play sound effects (place audio files in your app directory)
-self.play_sfx(self.path + "sound.wav")
+self.context["audio"]["play_sfx"](self.context["app_path"] + "sound.wav")
+
 # Play background music (looped)
-self.play_music(self.path + "music.wav", loop=True)
+self.context["audio"]["play_music"](self.context["app_path"] + "music.wav", loop=True)
 
 # Text-to-speech
-# The background=True option allows TTS to run without drawing to the screen
-self.run_tts("Hello, this will be spoken!", background=True)
+self.context["tts"]["run_tts"]("Hello, this will be spoken!", background=True)
 ```
 
 ### App Metadata
@@ -207,9 +269,6 @@ import random
 class App(AppBase):
     def __init__(self, context):
         super().__init__(context)
-        self.display_queue = context["display_queue"]
-        self.play_sfx = context["audio"]["play_sfx"]
-        self.path = context["app_path"]
         
         # Game state
         self.player_x = 64
@@ -226,37 +285,48 @@ class App(AppBase):
             self.needs_redraw = False
             
     def draw_game(self):
-        img = Image.new("1", (128, 64), 0)
-        draw = ImageDraw.Draw(img)
+        # Use batching for better performance
+        self.context["drawing"]["begin_batch"]()
         
-        # Draw player
-        draw.rectangle([self.player_x-2, self.player_y-2, 
-                       self.player_x+2, self.player_y+2], fill=1)
+        # Clear screen
+        self.context["drawing"]["clear_screen"]()
+        
+        # Draw player as a filled rectangle
+        self.context["drawing"]["draw_area"](
+            self.player_x-2, self.player_y-2, 4, 4, fill=255
+        )
         
         # Draw score
         font = self.context["fonts"]["small"]
-        draw.text((5, 5), f"Score: {self.score}", font=font, fill=1)
+        self.context["drawing"]["draw_text"](
+            f"Score: {self.score}", 5, 5, font
+        )
         
-        self.display_queue.put(("clear_base",))
-        self.display_queue.put(("draw_base_image", img, 0, 0))
+        # Execute all drawing at once
+        self.context["drawing"]["end_batch"]()
         
     def onkeydown(self, keycode):
+        moved = False
+        
         if keycode == "KEY_LEFT" and self.player_x > 5:
             self.player_x -= 5
-            self.needs_redraw = True
+            moved = True
         elif keycode == "KEY_RIGHT" and self.player_x < 123:
             self.player_x += 5
-            self.needs_redraw = True
+            moved = True
         elif keycode == "KEY_UP" and self.player_y > 5:
             self.player_y -= 5
-            self.needs_redraw = True
+            moved = True
         elif keycode == "KEY_DOWN" and self.player_y < 59:
             self.player_y += 5
-            self.needs_redraw = True
+            moved = True
         elif keycode == "KEY_ESC":
             self.context["app_manager"].swap_app_async(
                 "your_game", "launcher", update_rate_hz=20.0, delay=0.1
             )
+            
+        if moved:
+            self.needs_redraw = True
 ```
 
 ### Adding Your App to the Launcher
@@ -269,3 +339,55 @@ After creating your app, it will automatically be discovered by the ProxiTalk sy
 - Check the console output when running `python proxitalk.py`
 - The emulator window shows the actual display output
 - Use try/catch blocks around PIL operations to handle errors gracefully
+
+### Debug Overlay for Performance Optimization
+
+ProxiTalk includes a built-in debug overlay system to help developers optimize their drawing operations and understand how the display system works:
+
+#### Enabling Debug Overlay
+
+**In the emulator (Windows):**
+- Press `F1` while the emulator window is focused to toggle the debug overlay on/off
+- When enabled, you'll see red rectangles highlighting areas of the screen that are being updated
+- The console will show: `[Debug] Region overlay: ON` or `[Debug] Region overlay: OFF`
+
+#### How the Debug Overlay Works
+
+- **Red rectangles** appear whenever a drawing operation updates part of the screen
+- Each rectangle shows the **exact region** that was modified by a drawing call
+- Rectangles **fade out over time** (about 5 frames) to show the update sequence
+- **Semi-transparent** overlay allows you to see both the content and the update regions
+
+#### Using Debug Overlay for Optimization
+
+```python
+# Example: Inefficient drawing (many small updates)
+def bad_draw_example(self):
+    for i in range(10):
+        self.context["drawing"]["draw_text"](f"Line {i}", 10, i*10, font)
+    # Debug overlay will show 10 separate red rectangles
+
+# Example: Efficient drawing (batched updates)
+def good_draw_example(self):
+    self.context["drawing"]["begin_batch"]()
+    for i in range(10):
+        self.context["drawing"]["draw_text"](f"Line {i}", 10, i*10, font)
+    self.context["drawing"]["end_batch"]()
+    # Debug overlay will show 1 red rectangle covering the entire area
+```
+
+#### What to Look For
+
+- **Too many small rectangles**: Consider using `begin_batch()` and `end_batch()`
+- **Large rectangles for small changes**: You might be clearing/redrawing too much
+- **Overlapping rectangles**: Multiple drawing calls affecting the same area
+- **Constant flickering**: Indicates unnecessary redraws every frame
+
+#### Performance Tips Based on Debug Overlay
+
+1. **Batch related operations**: Group drawing calls that happen together
+2. **Minimize cleared areas**: Only clear the specific regions that changed
+3. **Use dirty flags**: Only redraw when something actually changed
+4. **Separate static/dynamic content**: Use overlay layer for frequently changing elements
+
+The debug overlay only works in the Windows emulator and helps identify inefficient drawing patterns that could impact performance on actual hardware.

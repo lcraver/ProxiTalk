@@ -66,7 +66,7 @@ if IS_WINDOWS:
             # Debug overlay for region updates
             self._debug_regions = []
             self._debug_overlay_duration = 1/20 * 5  # Show overlay for 5 frames at 20 FPS
-            self._show_debug_overlay = True  # Toggle this to enable/disable debug overlay
+            self._show_debug_overlay = False  # Toggle this to enable/disable debug overlay
 
             self._thread = threading.Thread(target=self._run_pygame_loop, daemon=True)
             self._thread.start()

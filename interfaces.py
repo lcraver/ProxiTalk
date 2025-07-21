@@ -236,30 +236,3 @@ class AppBase:
                 display_queue.put(("set_cursor_position", cursor_x, line_y))
                 
             line_y += bodyLineHeight + padding
-
-    def set_screen_with_cursor(self, title, text):
-        """
-        Set screen and enable cursor positioning for text input apps.
-        """
-        self._update_cursor_position = True
-        self.set_screen(title, text)
-        
-    def show_message(self, title, message, duration=2):
-        """
-        Show a temporary message screen.
-        """
-        import time
-        self.set_screen(title, message)
-        time.sleep(duration)
-        
-    def show_error(self, error_message):
-        """
-        Show an error screen.
-        """
-        self.set_screen("Error", error_message)
-        
-    def show_loading(self, message="Loading..."):
-        """
-        Show a loading screen.
-        """
-        self.set_screen("Loading", message)
