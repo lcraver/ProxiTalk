@@ -2,6 +2,9 @@ from unicodedata import name
 from interfaces import AppBase
 import bisect
 import os
+import threading
+import time
+import queue
 from config.keymap import key_map, shift_key_map
 
 class App(AppBase):
@@ -28,6 +31,13 @@ class App(AppBase):
         self.cursor_blink_timer = 0
         self.cursor_blink_interval = 0.5  # Blink every 500ms
         self._in_input_mode = False  # Track if we're actively inputting text
+        
+        # TTS state
+        self.tts_active = False  # Track if TTS is playing
+        self.tts_state = "idle"  # "idle", "speaking"
+        self.tts_thread = None  # Track TTS thread
+        self.tts_queue = queue.Queue()  # Queue for TTS requests
+        self.tts_worker_running = False  # Track if worker thread is running
         
         print("[Proxi] Initialized with hardware optimizations")
         print("[Proxi] - Region-based drawing for minimal display transfers")
@@ -127,6 +137,130 @@ class App(AppBase):
             help_width = self.context["get_text_size"](help_text, font_small)[0]
             help_x = (self.width - help_width) // 2
             self.draw["draw_text"](help_text, help_x, help_y, font_small, 255)
+
+    def draw_tts_status_icon(self):
+        """Draw TTS status icon in bottom right corner"""
+        if self.tts_active and self.tts_state == "speaking":
+            # Position in bottom right corner with small margin
+            icon_size = 8
+            icon_x = self.width - icon_size - 2
+            icon_y = self.height - icon_size - 2
+            
+            # Draw speaker icon
+            # Draw speaker base (rectangle)
+            self.draw["draw_overlay_area"](icon_x, icon_y + 2, 3, 4, 255)
+            # Draw speaker cone (triangle-like)
+            self.draw["draw_overlay_area"](icon_x + 3, icon_y + 1, 1, 6, 255)
+            self.draw["draw_overlay_area"](icon_x + 4, icon_y, 1, 8, 255)
+            # Draw sound waves
+            self.draw["draw_overlay_area"](icon_x + 6, icon_y + 2, 1, 1, 255)
+            self.draw["draw_overlay_area"](icon_x + 6, icon_y + 5, 1, 1, 255)
+
+    def draw_tts_status_text(self):
+        """Draw TTS status text in bottom left corner"""
+        if self.tts_active:
+            font_small = self.context["fonts"]["small"]
+            queue_size = self.tts_queue.qsize()
+            
+            if queue_size > 0:
+                status_text = f"Speaking ({queue_size} queued)"
+            else:
+                status_text = "Speaking"
+            
+            # Position in bottom left corner with 2px padding
+            status_x = 2
+            status_y = self.height - 8  # Leave room for text height
+            
+            self.draw["draw_overlay_text"](status_text, status_x, status_y, font_small, 255)
+
+    def tts_worker(self):
+        """Background worker that processes TTS queue"""
+        self.tts_worker_running = True
+        print("[Proxi] TTS worker thread started")
+        
+        try:
+            while self.tts_worker_running:
+                try:
+                    # Wait for next TTS request (with timeout to check if we should stop)
+                    text = self.tts_queue.get(timeout=0.5)
+                    
+                    if text is None:  # Sentinel value to stop worker
+                        break
+                    
+                    # Start TTS playback - show speaking icon immediately
+                    self.tts_active = True
+                    self.tts_state = "speaking"
+                    print(f"[Proxi] Speaking: {text}")
+                    
+                    try:
+                        # Run TTS (generation + playback) - this will handle the thread internally
+                        self.context["run_tts"](text, background=True)
+                        # The run_tts function handles threading internally, so we're done when it returns
+                        
+                        # Mark this task as done
+                        self.tts_queue.task_done()
+                        print(f"[Proxi] TTS completed for: {text}")
+                        
+                    except Exception as tts_error:
+                        print(f"[Proxi] TTS failed for: {text}, error: {tts_error}")
+                        
+                        # Reset TTS state immediately to hide speaking icon
+                        self.tts_active = False
+                        self.tts_state = "idle"
+                        
+                        # Restore the text to allow retry
+                        self.currentline = text
+                        self._in_input_mode = True
+                        
+                        # Update display to show the restored text
+                        self.current_suggestion = self.get_autocomplete_suggestion(self.currentline)
+                        
+                        # Force a UI update to show the restored text immediately
+                        self.update_input_display()
+                        
+                        # Mark this task as done even though it failed
+                        try:
+                            self.tts_queue.task_done()
+                        except ValueError:
+                            pass  # task_done called more times than there were items
+                    
+                    # If no more items in queue, hide icon
+                    if self.tts_queue.empty():
+                        self.tts_active = False
+                        self.tts_state = "idle"
+                    
+                except queue.Empty:
+                    # No new requests, continue checking
+                    continue
+                except Exception as e:
+                    print(f"[Proxi] TTS worker error: {e}")
+                    try:
+                        self.tts_queue.task_done()
+                    except ValueError:
+                        pass  # task_done called more times than there were items
+                    # Reset state on error
+                    if self.tts_queue.empty():
+                        self.tts_active = False
+                        self.tts_state = "idle"
+        finally:
+            # TTS worker stopping, hide icon
+            self.tts_active = False
+            self.tts_state = "idle"
+            self.tts_worker_running = False
+            print("[Proxi] TTS worker thread stopped")
+
+    def start_tts_worker(self):
+        """Start the TTS worker thread if not already running"""
+        if not self.tts_worker_running and (not self.tts_thread or not self.tts_thread.is_alive()):
+            self.tts_thread = threading.Thread(target=self.tts_worker, daemon=True)
+            self.tts_thread.start()
+
+    def add_tts_request(self, text):
+        """Add a TTS request to the queue"""
+        if text.strip():
+            self.tts_queue.put(text.strip())
+            self.start_tts_worker()
+            print(f"[Proxi] TTS request queued: {text} (Queue size: {self.tts_queue.qsize()})")
 
     def get_autocomplete_suggestion(self, current_text):
         if not current_text or current_text.endswith(' '):
@@ -259,6 +393,12 @@ class App(AppBase):
                         self.draw_highlighted_text(segments, self.padding, content_y + i * line_height, font_small)
                     else:
                         self.draw["draw_text"](line, self.padding, content_y + i * line_height, font_small, 255)
+            
+            # Draw TTS status icon if active
+            self.draw_tts_status_icon()
+            
+            # Draw TTS status text if active
+            self.draw_tts_status_text()
                     
         finally:
             # Execute all drawing operations at once for hardware optimization
@@ -297,7 +437,6 @@ class App(AppBase):
     def start(self):
         print("[Proxi] Started")
         # Initialize cursor state
-        import time
         self.current_suggestion = ""
         self.cursor_visible = True
         self.cursor_blink_timer = time.time()
@@ -305,9 +444,9 @@ class App(AppBase):
         self.draw_interface("Ready", "Start typing to see suggestions. Press [ESC] to return to launcher.")
 
     def update(self):
-        """Handle cursor blinking and periodic updates"""
-        import time
+        """Handle cursor blinking"""
         current_time = time.time()
+        need_redraw = False
         
         # Handle cursor blinking only when in input mode
         if current_time - self.cursor_blink_timer > self.cursor_blink_interval:
@@ -316,7 +455,31 @@ class App(AppBase):
             
             # Only redraw if we're in input mode (have text or explicitly in input mode)
             if self._in_input_mode or self.currentline:
+                need_redraw = True
+        
+        # Always redraw if TTS is active to ensure icon visibility
+        if self.tts_active:
+            need_redraw = True
+        
+        # Store previous TTS state to detect changes
+        if not hasattr(self, 'prev_tts_active'):
+            self.prev_tts_active = False
+            self.prev_tts_state = "idle"
+        
+        # Force redraw when TTS state changes
+        if (self.tts_active != self.prev_tts_active or 
+            self.tts_state != self.prev_tts_state):
+            need_redraw = True
+            self.prev_tts_active = self.tts_active
+            self.prev_tts_state = self.tts_state
+        
+        # Redraw if needed
+        if need_redraw:
+            if self._in_input_mode or self.currentline:
                 self.draw_interface("Input", "")
+            else:
+                self.draw_interface("Ready", "Start typing to see suggestions. Press [ESC] to return to launcher.")
+
     
     def onkeyup(self, keycode):
         if keycode == 'KEY_ESC':
@@ -335,20 +498,18 @@ class App(AppBase):
             return
 
         if keycode == 'KEY_ENTER':
-            old_line = self.currentline
-            
-            # Run TTS
-            self.context["run_tts"](self.currentline, background=True)
-            
-            # Check if audio was cached (immediate) or generated
-            cached_path = os.path.join(self.context["CACHE_DIR"], self.context["hash_text"](old_line) + ".raw")
-            if os.path.exists(cached_path):
+            if self.currentline.strip():  # Only process if there's actual text
+                # Add TTS request to queue
+                self.add_tts_request(self.currentline)
+                
+                # Clear input immediately and allow new input
+                old_line = self.currentline
                 self.currentline = ""
                 self.current_suggestion = ""
-                self._in_input_mode = False  # Exit input mode
-                self.draw_interface("Ready", "Ready for new input...")
-            else:
-                self.update_input_display()
+                self._in_input_mode = False  # Reset input mode
+                
+                # Show ready state
+                self.draw_interface("Ready", "Start typing to see suggestions. Press [ESC] to return to launcher.")
                 
         elif keycode == 'KEY_BACKSPACE':
             self._in_input_mode = True  # Enter input mode
@@ -362,3 +523,23 @@ class App(AppBase):
     
     def stop(self):
         print("[Proxi] Stopped")
+        # Clean up any running TTS
+        self.tts_worker_running = False
+        
+        # Clear the queue and add sentinel value to stop worker
+        try:
+            while not self.tts_queue.empty():
+                self.tts_queue.get_nowait()
+                self.tts_queue.task_done()
+        except queue.Empty:
+            pass
+        
+        # Add sentinel value to wake up and stop the worker
+        self.tts_queue.put(None)
+        
+        # Wait for worker thread to complete
+        if self.tts_thread and self.tts_thread.is_alive():
+            print("[Proxi] Waiting for TTS worker thread to complete...")
+            self.tts_thread.join(timeout=2.0)  # Wait up to 2 seconds
+        
+        self.tts_active = False
