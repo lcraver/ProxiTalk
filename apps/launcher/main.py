@@ -5,8 +5,6 @@ import time
 class App(AppBase):
     def __init__(self, context):
         super().__init__(context)
-        self.display_queue = context["display_queue"]
-        self.draw = context["drawing"]  # New region-based drawing API
         self.selection = 0
         self.app_count = 0
         self.valid_apps = []
@@ -73,7 +71,9 @@ class App(AppBase):
 
         if self.app_count == 0:
             if self.needs_full_redraw:
-                self.draw["clear_screen"]()
+                self.context["drawing"]["begin_batch"]()
+                self.context["drawing"]["clear_screen"]()
+                self.context["drawing"]["end_batch"]()
                 self.needs_full_redraw = False
             return
 
@@ -104,7 +104,9 @@ class App(AppBase):
         
         # Full redraw if page changed or first time
         if self.needs_full_redraw or page_changed or layout_changed:
-            self.draw["clear_screen"]()
+            self.context["drawing"]["begin_batch"]()
+            self.context["drawing"]["clear_screen"]()
+            
             self.app_regions.clear()
             self.dots_region = None
             
@@ -115,10 +117,13 @@ class App(AppBase):
             # Draw all apps for current page
             self.draw_all_page_apps(page_apps, start_index, current_layout)
             
+            self.context["drawing"]["end_batch"]()
             self.needs_full_redraw = False
         elif selection_changed:
             # Only update the selection (much faster)
+            self.context["drawing"]["begin_batch"]()
             self.update_selection_only(page_apps, start_index, current_layout)
+            self.context["drawing"]["end_batch"]()
         
         # Update tracking variables
         self.last_page = self.current_page
@@ -181,7 +186,7 @@ class App(AppBase):
             y = layout['y_offset'] + row * (layout['icon_h'] + layout['padding'])
             
             # Clear the old icon area and redraw as unselected
-            self.draw["clear_area"](x, y, layout['icon_w'], layout['icon_h'])
+            self.context["drawing"]["clear_area"](x, y, layout['icon_w'], layout['icon_h'])
             self.draw_app(global_index, app, x, y, layout)
         
         # Draw new selection (if it's on this page)
@@ -194,7 +199,7 @@ class App(AppBase):
             y = layout['y_offset'] + row * (layout['icon_h'] + layout['padding'])
             
             # Clear the area and redraw as selected
-            self.draw["clear_area"](x, y, layout['icon_w'], layout['icon_h'])
+            self.context["drawing"]["clear_area"](x, y, layout['icon_w'], layout['icon_h'])
             self.draw_app(global_index, app, x, y, layout)
     
     def draw_pagination_dots(self):
@@ -220,9 +225,9 @@ class App(AppBase):
 
             # Current page dot is filled, others are outlined
             if page == self.current_page:
-                self.draw["draw_area"](dot_x, y, dot_size_x_selected, dot_size_y, 255)
+                self.context["drawing"]["draw_area"](dot_x, y, dot_size_x_selected, dot_size_y, 255)
             else:
-                self.draw["draw_area"](dot_x, y, dot_size_x, dot_size_y, 255)
+                self.context["drawing"]["draw_area"](dot_x, y, dot_size_x, dot_size_y, 255)
 
     def draw_app(self, index, app, x, y, layout):
         """Draw an app icon using region-based drawing"""
@@ -235,7 +240,7 @@ class App(AppBase):
             icon = app.get("icon_normal")
 
         if icon:
-            self.draw["draw_image"](icon, x, y)
+            self.context["drawing"]["draw_image"](icon, x, y)
 
 
     def update(self):

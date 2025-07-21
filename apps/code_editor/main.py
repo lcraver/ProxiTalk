@@ -5,7 +5,6 @@ import time
 class App(AppBase):
     def __init__(self, context):
         super().__init__(context)
-        self.display_queue = context["display_queue"]
         self.width = context["screen_width"]
         self.height = context["screen_height"]
         self.play_sfx = context["audio"]["play_sfx"]
@@ -81,30 +80,37 @@ class App(AppBase):
         else:
             self.t = 0
         
-        # Handle cursor blinking
-        current_pos = (self.cursor_line, self.cursor_col)
-        if current_pos != self.last_cursor_pos:
-            # Cursor position changed, reset blink cycle
-            self.last_cursor_pos = current_pos
-            self.cursor_blink_timer = 0
-            self.cursor_visible = True
-            self.needs_redraw = True
-        else:
-            # Update blink timer
-            self.cursor_blink_timer += 1
-            if self.cursor_blink_timer >= self.cursor_blink_rate:
-                self.cursor_visible = not self.cursor_visible
+        # Handle cursor blinking only in insert mode
+        if self.mode == "insert":
+            current_pos = (self.cursor_line, self.cursor_col)
+            if current_pos != self.last_cursor_pos:
+                # Cursor position changed, reset blink cycle
+                self.last_cursor_pos = current_pos
                 self.cursor_blink_timer = 0
+                self.cursor_visible = True
                 self.needs_redraw = True
-            
-        # Only redraw when necessary
-        if self.needs_redraw and self.t % 10 == 0:  # Update every 0.5 seconds at 20Hz
+            else:
+                # Update blink timer
+                self.cursor_blink_timer += 1
+                if self.cursor_blink_timer >= self.cursor_blink_rate:
+                    self.cursor_visible = not self.cursor_visible
+                    self.cursor_blink_timer = 0
+                    # Only redraw cursor area, not entire screen
+                    self.redraw_cursor_only()
+                    return  # Early return to avoid full redraw
+        
+        # Only redraw when necessary and not too frequently
+        if self.needs_redraw:
             self.refresh_display()
             self.needs_redraw = False
     
     def refresh_display(self):
         """Refresh the entire display"""
-        self.display_queue.put(("clear_base",))
+        # Use batching for improved performance
+        self.context["drawing"]["begin_batch"]()
+        
+        # Clear the screen
+        self.context["drawing"]["clear_screen"]()
         
         # Draw the main editor area
         self.draw_editor_content()
@@ -114,6 +120,51 @@ class App(AppBase):
         
         # Draw cursor
         self.draw_cursor()
+        
+        # End batch to execute all operations at once
+        self.context["drawing"]["end_batch"]()
+    
+    def redraw_cursor_only(self):
+        """Redraw only the cursor without full screen refresh"""
+        # Use batching for cursor-only updates
+        self.context["drawing"]["begin_batch"]()
+        
+        # Clear the previous cursor position if it exists
+        if self.last_cursor_draw_pos:
+            x, y, w, h = self.last_cursor_draw_pos
+            self.context["drawing"]["clear_overlay_area"](x, y, w, h)
+            self.last_cursor_draw_pos = None
+        
+        # Draw cursor if visible and in insert mode
+        if self.mode == "insert" and self.cursor_visible:
+            font = self.context["fonts"]["small"]
+            line_height = 5
+            
+            # Calculate cursor position
+            visible_line = self.cursor_line - self.scroll_offset
+            if 0 <= visible_line < self.visible_lines:
+                y_pos = visible_line * line_height + 1
+                
+                # Calculate x position based on cursor column with horizontal scrolling
+                visible_col = self.cursor_col - self.horizontal_scroll
+                if visible_col >= 0:  # Only draw cursor if it's in the visible area
+                    # Get the visible portion of the line up to cursor
+                    line_text = self.lines[self.cursor_line]
+                    start_col = max(0, self.horizontal_scroll)
+                    end_col = min(len(line_text), self.cursor_col)
+                    
+                    if start_col <= end_col:
+                        visible_text = line_text[start_col:end_col]
+                        text_width, _ = self.context["get_text_size"](visible_text, font)
+                        x_pos = 20 + text_width
+                        
+                        # Draw cursor as a white vertical line
+                        self.context["drawing"]["draw_overlay_area"](x_pos, y_pos, 1, line_height, fill=255)
+                        
+                        # Remember this position for next time
+                        self.last_cursor_draw_pos = (x_pos, y_pos, 1, line_height)
+        
+        self.context["drawing"]["end_batch"]()
     
     def draw_editor_content(self):
         """Draw the main text content"""
@@ -137,11 +188,11 @@ class App(AppBase):
             
             # Highlight current line
             if highlighted:
-                self.display_queue.put(("draw_base_area", 0, y_pos, self.width, line_height, 255))  # White background
+                self.context["drawing"]["draw_area"](0, y_pos, self.width, line_height, fill=255)  # White background
 
             # Draw line number
             line_num = f"{i+1:2d}"
-            self.display_queue.put(("draw_base_text", font, line_num, 2, y_pos, 0 if highlighted else 255))
+            self.context["drawing"]["draw_text"](line_num, 2, y_pos, font, fill=0 if highlighted else 255)
             
             # Apply horizontal scrolling to line content
             if self.horizontal_scroll > 0 and len(line_text) > self.horizontal_scroll:
@@ -158,14 +209,14 @@ class App(AppBase):
                     visible_text = visible_text[:max_chars]
             
             # Draw line content
-            self.display_queue.put(("draw_base_text", font, visible_text, line_num_width, y_pos, 0 if highlighted else 255))
+            self.context["drawing"]["draw_text"](visible_text, line_num_width, y_pos, font, fill=0 if highlighted else 255)
 
     def draw_cursor(self):
         """Draw the cursor"""
         # Clear the previous cursor position if it exists
         if self.last_cursor_draw_pos:
             x, y, w, h = self.last_cursor_draw_pos
-            self.display_queue.put(("clear_overlay_area", x, y, w, h))
+            self.context["drawing"]["clear_overlay_area"](x, y, w, h)
             self.last_cursor_draw_pos = None
         
         if self.mode == "insert" and self.cursor_visible:
@@ -191,7 +242,7 @@ class App(AppBase):
                         x_pos = 20 + text_width
                         
                         # Draw cursor as a white vertical line
-                        self.display_queue.put(("draw_overlay_area", x_pos, y_pos, 0, line_height, 1))
+                        self.context["drawing"]["draw_overlay_area"](x_pos, y_pos, 1, line_height, fill=255)
                         
                         # Remember this position for next time
                         self.last_cursor_draw_pos = (x_pos, y_pos, 1, line_height)
@@ -204,7 +255,7 @@ class App(AppBase):
         
         if self.mode == "normal":
             # Draw the status bar background
-            self.display_queue.put(("draw_base_area", 0, status_y - 1, self.width, line_height * 3 + 2, 255))
+            self.context["drawing"]["draw_area"](0, status_y - 1, self.width, line_height * 3 + 2, fill=255)
             
             # Show file info and commands
             file_status = f"F: {self.filename or 'untitled'}"
@@ -212,52 +263,52 @@ class App(AppBase):
                 file_status += "*"
             if self.tts_enabled:
                 file_status += " [TTS]"
-            self.display_queue.put(("draw_base_text", font, file_status, 2, status_y, 0))
+            self.context["drawing"]["draw_text"](file_status, 2, status_y, font, fill=0)
             
             cursor_info = f"Ln {self.cursor_line + 1}, Col {self.cursor_col + 1}"
-            self.display_queue.put(("draw_base_text", font, cursor_info, 2, status_y + line_height, 0))
+            self.context["drawing"]["draw_text"](cursor_info, 2, status_y + line_height, font, fill=0)
             
-            commands = "I:Ins O:Open S:Save F:Find G:Goto Q:Quit"
-            self.display_queue.put(("draw_base_text", font, commands, 2, status_y + line_height * 2, 0))
+            commands = "I:Ins O:Open ALT+S:Save F:Find G:Goto Q:Quit"
+            self.context["drawing"]["draw_text"](commands, 2, status_y + line_height * 2, font, fill=0)
             
         elif self.mode == "insert":
             # Draw the status bar background
-            self.display_queue.put(("draw_base_area", 0, status_y - 1 + line_height * 2, self.width, line_height + 2, 255))
+            self.context["drawing"]["draw_area"](0, status_y - 1 + line_height * 2, self.width, line_height + 2, fill=255)
 
             cursor_info = f"{self.cursor_line + 1} / {self.cursor_col + 1} (ins: esc to exit)"
-            self.display_queue.put(("draw_base_text", font, cursor_info, 2, status_y + line_height * 2, 0))
+            self.context["drawing"]["draw_text"](cursor_info, 2, status_y + line_height * 2, font, fill=0)
             
         elif self.mode == "save":
             prompt = f"Save as: {self.save_buffer}"
-            self.display_queue.put(("draw_base_text", font, prompt, 2, status_y, 0))
-            self.display_queue.put(("draw_base_text", font, "Enter to confirm, Esc to cancel", 2, status_y + line_height, 0))
+            self.context["drawing"]["draw_text"](prompt, 2, status_y, font, fill=255)
+            self.context["drawing"]["draw_text"]("Enter to confirm, Esc to cancel", 2, status_y + line_height, font, fill=255)
             
         elif self.mode == "open":
             prompt = f"Open file: {self.open_buffer}"
-            self.display_queue.put(("draw_base_text", font, prompt, 2, status_y, 0))
-            self.display_queue.put(("draw_base_text", font, "Enter to confirm, Esc to cancel", 2, status_y + line_height, 0))
+            self.context["drawing"]["draw_text"](prompt, 2, status_y, font, fill=255)
+            self.context["drawing"]["draw_text"]("Enter to confirm, Esc to cancel", 2, status_y + line_height, font, fill=255)
             
         elif self.mode == "find":
             # Draw the status bar background
             bg_height = line_height * 2 + 2 if self.find_results else line_height + 2
-            self.display_queue.put(("draw_base_area", 0, status_y - 1, self.width, bg_height, 255))
+            self.context["drawing"]["draw_area"](0, status_y - 1, self.width, bg_height, fill=255)
             
             prompt = f"Find: {self.find_buffer}"
-            self.display_queue.put(("draw_base_text", font, prompt, 2, status_y, 0))
+            self.context["drawing"]["draw_text"](prompt, 2, status_y, font, fill=0)
             if self.find_results:
                 result_info = f"Match {self.current_find_index + 1} of {len(self.find_results)}"
-                self.display_queue.put(("draw_base_text", font, result_info, 2, status_y + line_height, 0))
+                self.context["drawing"]["draw_text"](result_info, 2, status_y + line_height, font, fill=0)
             else:
                 help_text = "Enter to search, Esc to cancel"
-                self.display_queue.put(("draw_base_text", font, help_text, 2, status_y + line_height, 0))
+                self.context["drawing"]["draw_text"](help_text, 2, status_y + line_height, font, fill=0)
         
         elif self.mode == "goto":
             # Draw the status bar background
-            self.display_queue.put(("draw_base_area", 0, status_y - 1 + line_height, self.width, line_height * 2 + 2, 255))
+            self.context["drawing"]["draw_area"](0, status_y - 1 + line_height, self.width, line_height * 2 + 2, fill=255)
 
             prompt = f"Goto line: {self.goto_buffer}"
-            self.display_queue.put(("draw_base_text", font, prompt, 2, status_y + line_height, 0))
-            self.display_queue.put(("draw_base_text", font, "Enter to jump, Esc to cancel", 2, status_y + line_height * 2, 0))
+            self.context["drawing"]["draw_text"](prompt, 2, status_y + line_height, font, fill=0)
+            self.context["drawing"]["draw_text"]("Enter to jump, Esc to cancel", 2, status_y + line_height * 2, font, fill=0)
 
         elif self.mode == "browse":
             self.draw_file_browser(font, status_y + line_height)
@@ -267,22 +318,22 @@ class App(AppBase):
         line_height = 5  # Same as other functions
         
         # Draw the status bar background
-        self.display_queue.put(("draw_base_area", 0, status_y - 1, self.width, line_height * 2 + 2, 255))
+        self.context["drawing"]["draw_area"](0, status_y - 1, self.width, line_height * 2 + 2, fill=255)
         
         # Show current directory
         dir_display = self.browser_directory
         if len(dir_display) > 20:
             dir_display = "..." + dir_display[-17:]
-        self.display_queue.put(("draw_base_text", font, f"|{dir_display}", 2, status_y, 0))
+        self.context["drawing"]["draw_text"](f"|{dir_display}", 2, status_y, font, fill=0)
         
         # Show navigation help
-        self.display_queue.put(("draw_base_text", font, "Enter: Select | Esc: Cancel", 2, status_y + line_height, 0))
+        self.context["drawing"]["draw_text"]("Enter: Select | Esc: Cancel", 2, status_y + line_height, font, fill=0)
         
         # Show file list in the main area
-        self.display_queue.put(("draw_base_area", 0, 0, self.width, status_y - 2, 0))  # Clear main area
+        self.context["drawing"]["draw_area"](0, 0, self.width, status_y - 2, fill=0)  # Clear main area
 
         if not self.browser_items:
-            self.display_queue.put(("draw_base_text", font, "No items in directory", 2, 10))
+            self.context["drawing"]["draw_text"]("No items in directory", 2, 10, font, fill=255)
             return
         
         # Calculate visible range
@@ -306,7 +357,7 @@ class App(AppBase):
             if i == self.browser_selection:
                 self.draw_inverted_text(font, display_text, 2, y_pos)
             else:
-                self.display_queue.put(("draw_base_text", font, display_text, 2, y_pos))
+                self.context["drawing"]["draw_text"](display_text, 2, y_pos, font, fill=255)
         
         # Show scroll indicator if needed (overlay on the status bar background)
         if len(self.browser_items) > self.browser_visible_items:
@@ -314,7 +365,7 @@ class App(AppBase):
             # Calculate position to right-align the scroll info
             scroll_width, _ = self.context["get_text_size"](scroll_info, font)
             scroll_x = self.width - scroll_width - 2
-            self.display_queue.put(("draw_base_text", font, scroll_info, scroll_x, status_y + line_height, 0))
+            self.context["drawing"]["draw_text"](scroll_info, scroll_x, status_y + line_height, font, fill=0)
     
     def draw_inverted_text(self, font, text, x, y):
         """Draw text with inverted colors (white background, black text)"""
@@ -334,13 +385,13 @@ class App(AppBase):
         # Draw black text on white background
         draw.text((1, 0), text, font=font, fill=0)  # Black text with 1px padding
         
-        # Draw the inverted text image
-        self.display_queue.put(("draw_base_image", bg_img, x-1, y))
+        # Draw the inverted text image using context drawing
+        self.context["drawing"]["draw_image"](bg_img, x-1, y)
     
     def onkeyup(self, keycode):
         """Handle key releases"""
-        # Mark for redraw on any key input
-        self.mark_for_redraw()
+        # Only mark for redraw if the key actually changes something visible
+        # Don't redraw for every key - be more selective
         
         if self.mode == "normal":
             self.handle_normal_mode(keycode)
@@ -364,59 +415,74 @@ class App(AppBase):
             self.cursor_blink_timer = 0
             self.cursor_visible = True
             self.speak("Insert mode")
+            self.mark_for_redraw()  # Mode change requires redraw
             
         elif keycode == "KEY_O":
             self.mode = "browse"
             self.init_file_browser()
+            self.mark_for_redraw()  # Mode change requires redraw
             
         elif keycode == "KEY_CTRL_O":  # Ctrl+O for quick filename entry
             self.mode = "open"
             self.open_buffer = ""
+            self.mark_for_redraw()  # Mode change requires redraw
             
-        elif keycode == "KEY_S":
+        # Alt+S for quick save
+        elif keycode == "KEY_S" and "KEY_RIGHTALT" in self.context["pressed_keys"]:
             self.mode = "save"
             self.save_buffer = self.filename
+            self.mark_for_redraw()  # Mode change requires redraw
             
         elif keycode == "KEY_F":
             self.mode = "find"
             self.find_buffer = ""
+            self.mark_for_redraw()  # Mode change requires redraw
             
         elif keycode == "KEY_G":
             self.mode = "goto"
             self.goto_buffer = ""
+            self.mark_for_redraw()  # Mode change requires redraw
             
         elif keycode == "KEY_T":
             self.tts_enabled = not self.tts_enabled
             status = "enabled" if self.tts_enabled else "disabled"
             self.speak(f"TTS {status}")
+            self.mark_for_redraw()  # Status change requires redraw
             
         elif keycode == "KEY_Q":
             if self.file_modified:
                 self.speak("File has unsaved changes. Save first with S.")
             else:
-                self.display_queue.put(("set_screen", "Launcher", "Exiting Code Editor..."))
+                # Use context drawing to show transition message
                 self.context["app_manager"].swap_app_async("code_editor", "launcher", update_rate_hz=20.0, delay=0.1)
         
-        # Navigation
-        elif keycode == "KEY_UP":
+        # Navigation - these require redraws
+        elif keycode == "KEY_UP" or keycode == "KEY_W":
             self.move_cursor(-1, 0)
-        elif keycode == "KEY_DOWN":
+            self.mark_for_redraw()
+        elif keycode == "KEY_DOWN"or keycode == "KEY_S":
             self.move_cursor(1, 0)
-        elif keycode == "KEY_LEFT":
+            self.mark_for_redraw()
+        elif keycode == "KEY_LEFT" or keycode == "KEY_A":
             self.move_cursor(0, -1)
-        elif keycode == "KEY_RIGHT":
+            self.mark_for_redraw()
+        elif keycode == "KEY_RIGHT" or keycode == "KEY_D":
             self.move_cursor(0, 1)
+            self.mark_for_redraw()
         elif keycode == "KEY_HOME":
             self.cursor_col = 0
+            self.mark_for_redraw()
         elif keycode == "KEY_END":
             self.cursor_col = len(self.lines[self.cursor_line])
+            self.mark_for_redraw()
         elif keycode == "KEY_PGUP":
             self.move_cursor(-self.visible_lines, 0)
+            self.mark_for_redraw()
         elif keycode == "KEY_PGDOWN":
             self.move_cursor(self.visible_lines, 0)
+            self.mark_for_redraw()
             
         elif keycode == "KEY_ESC":
-            self.display_queue.put(("set_screen", "Launcher", "Exiting Code Editor..."))
             self.context["app_manager"].swap_app_async("code_editor", "launcher", update_rate_hz=20.0, delay=0.1)
     
     def handle_insert_mode(self, keycode):
@@ -425,125 +491,154 @@ class App(AppBase):
             self.mode = "normal"
             self.cursor_visible = False  # Hide cursor in normal mode
             self.speak("Normal mode")
+            self.mark_for_redraw()  # Mode change requires redraw
             return
             
-        # Handle special keys
+        # Handle special keys - these modify content so need redraw
         if keycode == "KEY_ENTER":
             self.insert_newline()
+            self.mark_for_redraw()
         elif keycode == "KEY_BACKSPACE":
             self.delete_char()
+            self.mark_for_redraw()
         elif keycode == "KEY_TAB":
             self.insert_text("    ")  # 4 spaces for tab
+            self.mark_for_redraw()
         elif keycode == "KEY_UP":
             self.move_cursor(-1, 0)
+            # Don't redraw for cursor movement in insert mode - cursor blink handles it
         elif keycode == "KEY_DOWN":
             self.move_cursor(1, 0)
+            # Don't redraw for cursor movement in insert mode - cursor blink handles it
         elif keycode == "KEY_LEFT":
             self.move_cursor(0, -1)
+            # Don't redraw for cursor movement in insert mode - cursor blink handles it
         elif keycode == "KEY_RIGHT":
             self.move_cursor(0, 1)
+            # Don't redraw for cursor movement in insert mode - cursor blink handles it
         else:
-            # Handle character input
+            # Handle character input - this modifies content so needs redraw
             char = self.keycode_to_char(keycode)
             if char:
                 self.insert_text(char)
+                self.mark_for_redraw()
     
     def handle_save_mode(self, keycode):
         """Handle keys in save mode"""
         if keycode == "KEY_ESC":
             self.mode = "normal"
+            self.mark_for_redraw()  # Mode change requires redraw
             return
             
         if keycode == "KEY_ENTER":
             if self.save_buffer:
                 self.save_file(self.save_buffer)
             self.mode = "normal"
+            self.mark_for_redraw()  # Mode change requires redraw
             return
             
         if keycode == "KEY_BACKSPACE":
             if self.save_buffer:
                 self.save_buffer = self.save_buffer[:-1]
+                self.mark_for_redraw()  # Buffer change requires redraw
             return
             
         char = self.keycode_to_char(keycode)
         if char and char.isprintable():
             self.save_buffer += char
+            self.mark_for_redraw()  # Buffer change requires redraw
     
     def handle_open_mode(self, keycode):
         """Handle keys in open mode"""
         if keycode == "KEY_ESC":
             self.mode = "normal"
+            self.mark_for_redraw()  # Mode change requires redraw
             return
             
         if keycode == "KEY_ENTER":
             if self.open_buffer:
                 self.open_file(self.open_buffer)
             self.mode = "normal"
+            self.mark_for_redraw()  # Mode change requires redraw
             return
             
         if keycode == "KEY_BACKSPACE":
             if self.open_buffer:
                 self.open_buffer = self.open_buffer[:-1]
+                self.mark_for_redraw()  # Buffer change requires redraw
             return
             
         char = self.keycode_to_char(keycode)
         if char and char.isprintable():
             self.open_buffer += char
+            self.mark_for_redraw()  # Buffer change requires redraw
     
     def handle_find_mode(self, keycode):
         """Handle keys in find mode"""
         if keycode == "KEY_ESC":
             self.mode = "normal"
             self.find_results = []
+            self.mark_for_redraw()  # Mode change requires redraw
             return
             
         if keycode == "KEY_ENTER":
             if self.find_buffer:
                 self.perform_search()
+                self.mark_for_redraw()  # Search results require redraw
             else:
                 self.mode = "normal"
+                self.mark_for_redraw()  # Mode change requires redraw
             return
             
         if keycode == "KEY_BACKSPACE":
             if self.find_buffer:
                 self.find_buffer = self.find_buffer[:-1]
+                self.mark_for_redraw()  # Buffer change requires redraw
             return
             
         if keycode == "KEY_F3" or keycode == "KEY_DOWN":
             self.next_find_result()
+            self.mark_for_redraw()  # Cursor movement requires redraw
             return
             
         char = self.keycode_to_char(keycode)
         if char and char.isprintable():
             self.find_buffer += char
+            self.mark_for_redraw()  # Buffer change requires redraw
     
     def handle_goto_mode(self, keycode):
         """Handle keys in goto mode"""
         if keycode == "KEY_ESC":
             self.mode = "normal"
+            self.mark_for_redraw()  # Mode change requires redraw
             return
             
         if keycode == "KEY_ENTER":
             if self.goto_buffer:
                 self.goto_line()
+                self.mark_for_redraw()  # Cursor movement requires redraw
             else:
                 self.mode = "normal"
+                self.mark_for_redraw()  # Mode change requires redraw
             return
             
         if keycode == "KEY_BACKSPACE":
             if self.goto_buffer:
                 self.goto_buffer = self.goto_buffer[:-1]
+                self.mark_for_redraw()  # Buffer change requires redraw
             return
             
         # Only allow digits for line numbers
         char = self.keycode_to_char(keycode)
         if char and char.isdigit():
             self.goto_buffer += char
+            self.mark_for_redraw()  # Buffer change requires redraw
     
     def handle_browse_mode(self, keycode):
         """Handle keys in file browser mode"""
         if keycode == "KEY_ESC":
             self.mode = "normal"
+            self.mark_for_redraw()  # Mode change requires redraw
             return
             
         if keycode == "KEY_ENTER":
@@ -560,37 +655,43 @@ class App(AppBase):
                         # Enter subdirectory
                         self.browser_directory = os.path.join(self.browser_directory, selected_item['name'])
                     self.init_file_browser()
+                    self.mark_for_redraw()  # Directory change requires redraw
                 else:
                     # Open file
                     filepath = os.path.join(self.browser_directory, selected_item['name'])
                     self.open_file_direct(filepath)
                     self.mode = "normal"
+                    self.mark_for_redraw()  # Mode change requires redraw
             return
             
-        if keycode == "KEY_UP":
+        if keycode == "KEY_UP" or keycode == "KEY_W":
             if self.browser_selection > 0:
                 self.browser_selection -= 1
                 # Adjust scroll if needed
                 if self.browser_selection < self.browser_scroll:
                     self.browser_scroll = self.browser_selection
+                self.mark_for_redraw()  # Selection change requires redraw
             return
             
-        if keycode == "KEY_DOWN":
+        if keycode == "KEY_DOWN" or keycode == "KEY_S":
             if self.browser_selection < len(self.browser_items) - 1:
                 self.browser_selection += 1
                 # Adjust scroll if needed
                 if self.browser_selection >= self.browser_scroll + self.browser_visible_items:
                     self.browser_scroll = self.browser_selection - self.browser_visible_items + 1
+                self.mark_for_redraw()  # Selection change requires redraw
             return
             
         if keycode == "KEY_HOME":
             self.browser_selection = 0
             self.browser_scroll = 0
+            self.mark_for_redraw()  # Selection change requires redraw
             return
             
         if keycode == "KEY_END":
             self.browser_selection = len(self.browser_items) - 1
             self.browser_scroll = max(0, self.browser_selection - self.browser_visible_items + 1)
+            self.mark_for_redraw()  # Selection change requires redraw
             return
     
     def init_file_browser(self):

@@ -45,9 +45,9 @@ class App(AppBase):
         font = self.context["fonts"]["large_bold"]
         font_width, font_height = self.context["get_text_size"](self.current_time, font)
         
-        # Draw clock
+        # Draw clock (convert to integers)
         self.display_queue.put(("draw_base_text", font, self.current_time, 
-                              (self.width/2)-(font_width/2), (self.height/2)-(font_height/2)-6))
+                              int((self.width/2)-(font_width/2)), int((self.height/2)-(font_height/2)-6)))
         
         # Draw mode indicator
         small_font = self.context["fonts"]["small"]
@@ -93,17 +93,17 @@ class App(AppBase):
             display_text = f"{minutes:02d}:{seconds:02d}"
             sub_text = "(paused)" if self.timer_remaining > 0 else ""
         
-        # Draw timer display
+        # Draw timer display (convert to integers)
         font = self.context["fonts"]["default"]
         font_width, font_height = self.context["get_text_size"](display_text, font)
         self.display_queue.put(("draw_base_text", font, display_text,
-                              (self.width/2)-(font_width/2), 2))
+                              int((self.width/2)-(font_width/2)), 2))
         
         if sub_text:
             sub_font = self.context["fonts"]["small"]
             sub_width, sub_height = self.context["get_text_size"](sub_text, sub_font)
             self.display_queue.put(("draw_base_text", sub_font, sub_text,
-                                  (self.width/2)-(sub_width/2), font_height + 6))
+                                  int((self.width/2)-(sub_width/2)), font_height + 6))
         
         # Draw instructions
         small_font = self.context["fonts"]["small"]
@@ -125,12 +125,12 @@ class App(AppBase):
                 "S: Set Timer | C: Switch to Clock"
             ]
         
-        # Draw each instruction line with proper spacing
+        # Draw each instruction line with proper spacing (convert to integers)
         y_offset = 32
         for i, instruction in enumerate(instructions):
             width, height = self.context["get_text_size"](instruction, small_font)
             self.display_queue.put(("draw_base_text", small_font, instruction, 
-                                  self.width / 2 - width / 2, y_offset + (i * 6)))
+                                  int(self.width / 2 - width / 2), y_offset + (i * 6)))
         
         # Play tick sound for running timer
         if self.timer_running and self.timer_remaining > 0:

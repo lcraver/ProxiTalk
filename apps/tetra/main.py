@@ -1,12 +1,10 @@
 from interfaces import AppBase
 import random
 import time
-from PIL import Image, ImageDraw
 
 class App(AppBase):
     def __init__(self, context):
         super().__init__(context)
-        self.display_queue = context["display_queue"]
         self.play_sfx = context["audio"]["play_sfx"]
         self.run_tts = context["run_tts"]
         self.path = context["app_path"]
@@ -141,6 +139,25 @@ class App(AppBase):
                         
         return True
         
+    def get_ghost_piece_position(self, piece):
+        """Calculate where the piece would land if hard-dropped"""
+        if not piece:
+            return None
+            
+        # Create a copy of the piece to avoid modifying the original
+        ghost_piece = {
+            'shape': piece['shape'],
+            'x': piece['x'],
+            'y': piece['y'],
+            'type': piece['type']
+        }
+        
+        # Drop the ghost piece as far down as possible
+        while self.is_valid_position(ghost_piece, dy=1):
+            ghost_piece['y'] += 1
+            
+        return ghost_piece
+        
     def place_piece(self, piece):
         """Place a piece on the grid"""
         for y in range(4):
@@ -236,26 +253,55 @@ class App(AppBase):
         self.run_tts(f"Game over! Final score: {self.score}", background=True)
         self.draw_game_over()
         
-    # this should definitely only draw the game itself and not the UI since that update less...
     def draw_game(self):
-        img = Image.new("1", (128, 64), 0)
-        draw = ImageDraw.Draw(img)
+        # Use batching for improved performance
+        self.context["drawing"]["begin_batch"]()
+        
+        # Clear the screen first
+        self.context["drawing"]["clear_screen"]()
         
         # Draw grid border
         border_x1 = self.GRID_OFFSET_X - 1
         border_y1 = self.GRID_OFFSET_Y - 1
         border_x2 = self.GRID_OFFSET_X + self.GRID_WIDTH * self.CELL_SIZE
         border_y2 = self.GRID_OFFSET_Y + self.GRID_HEIGHT * self.CELL_SIZE
-        draw.rectangle([border_x1, border_y1, border_x2, border_y2], outline=1, fill=0)
+        
+        # Draw border as individual lines since we don't have a direct outline method
+        # Top border
+        self.context["drawing"]["draw_area"](border_x1, border_y1, border_x2 - border_x1 + 1, 1, fill=255)
+        # Bottom border
+        self.context["drawing"]["draw_area"](border_x1, border_y2, border_x2 - border_x1 + 1, 1, fill=255)
+        # Left border
+        self.context["drawing"]["draw_area"](border_x1, border_y1, 1, border_y2 - border_y1 + 1, fill=255)
+        # Right border
+        self.context["drawing"]["draw_area"](border_x2, border_y1, 1, border_y2 - border_y1 + 1, fill=255)
         
         # Collect all filled cells for batch drawing
         filled_cells = []
+        ghost_cells = []
         
         # Add placed pieces
         for y in range(self.GRID_HEIGHT):
             for x in range(self.GRID_WIDTH):
                 if self.grid[y][x]:
                     filled_cells.append((x, y))
+        
+        # Add ghost piece (transparent preview of where piece would land)
+        ghost_piece = self.get_ghost_piece_position(self.current_piece)
+        if ghost_piece and self.current_piece:
+            # Only show ghost piece if it's different from current piece position
+            if ghost_piece['y'] != self.current_piece['y']:
+                for y in range(4):
+                    for x in range(4):
+                        if ghost_piece['shape'][y][x]:
+                            grid_x = ghost_piece['x'] + x
+                            grid_y = ghost_piece['y'] + y
+                            
+                            # Only add if within visible area and not overlapping with placed pieces
+                            if (0 <= grid_x < self.GRID_WIDTH and 
+                                grid_y >= 0 and grid_y < self.GRID_HEIGHT and
+                                not self.grid[grid_y][grid_x]):
+                                ghost_cells.append((grid_x, grid_y))
         
         # Add current piece
         if self.current_piece:
@@ -270,39 +316,47 @@ class App(AppBase):
                             grid_y >= 0 and grid_y < self.GRID_HEIGHT):
                             filled_cells.append((grid_x, grid_y))
         
-        # Draw all filled cells in one go
+        # Draw ghost piece first (so it appears behind the current piece)
+        for x, y in ghost_cells:
+            pixel_x = self.GRID_OFFSET_X + x * self.CELL_SIZE
+            pixel_y = self.GRID_OFFSET_Y + y * self.CELL_SIZE
+            
+            # Create regular checkerboard pattern for transparency effect
+            # Use grid coordinates to ensure consistent pattern across all ghost pieces
+            for dy in range(self.CELL_SIZE):
+                for dx in range(self.CELL_SIZE):
+                    # Use absolute pixel position for consistent checkerboard pattern
+                    abs_pixel_x = pixel_x + dx
+                    abs_pixel_y = pixel_y + dy
+                    # Checkerboard pattern: show pixel if sum of absolute coordinates is even
+                    if (abs_pixel_x + abs_pixel_y) % 2 == 0:
+                        self.context["drawing"]["draw_area"](abs_pixel_x, abs_pixel_y, 1, 1, fill=255)
+        
+        # Draw all solid filled cells using the new drawing methods
         for x, y in filled_cells:
             pixel_x = self.GRID_OFFSET_X + x * self.CELL_SIZE
             pixel_y = self.GRID_OFFSET_Y + y * self.CELL_SIZE
-            draw.rectangle([pixel_x, pixel_y, 
-                          pixel_x + self.CELL_SIZE - 1, 
-                          pixel_y + self.CELL_SIZE - 1], fill=1)
+            self.context["drawing"]["draw_area"](pixel_x, pixel_y, self.CELL_SIZE, self.CELL_SIZE, fill=255)
         
         # Draw score and level (right side)
         font = self.context["fonts"]["small"]
         score_x = self.GRID_OFFSET_X + self.GRID_WIDTH * self.CELL_SIZE + 3
         
-        score_text = f"Score:"
-        draw.text((score_x, 5), score_text, font=font, fill=1)
-        score_value = f"{self.score}"
-        draw.text((score_x, 12), score_value, font=font, fill=1)
+        self.context["drawing"]["draw_text"]("Score:", score_x, 5, font, fill=255)
+        self.context["drawing"]["draw_text"](f"{self.score}", score_x, 12, font, fill=255)
         
-        level_text = f"Level:"
-        draw.text((score_x, 22), level_text, font=font, fill=1)
-        level_value = f"{self.level}"
-        draw.text((score_x, 29), level_value, font=font, fill=1)
+        self.context["drawing"]["draw_text"]("Level:", score_x, 22, font, fill=255)
+        self.context["drawing"]["draw_text"](f"{self.level}", score_x, 29, font, fill=255)
         
-        lines_text = f"Lines:"
-        draw.text((score_x, 39), lines_text, font=font, fill=1)
-        lines_value = f"{self.lines_cleared}"
-        draw.text((score_x, 46), lines_value, font=font, fill=1)
+        self.context["drawing"]["draw_text"]("Lines:", score_x, 39, font, fill=255)
+        self.context["drawing"]["draw_text"](f"{self.lines_cleared}", score_x, 46, font, fill=255)
         
         # Draw next piece preview (left side)
         next_y = 5
         next_text = "Next:"
-        width = draw.textlength(next_text, font=font)
-        next_x = border_x1 - width - 1
-        draw.text((next_x, next_y), next_text, font=font, fill=1)
+        text_width, text_height = self.context["get_text_size"](next_text, font)
+        next_x = border_x1 - text_width - 1
+        self.context["drawing"]["draw_text"](next_text, next_x, next_y, font, fill=255)
         
         # Draw next piece
         if self.next_piece:
@@ -311,15 +365,17 @@ class App(AppBase):
                     if self.next_piece['shape'][y][x]:
                         pixel_x = next_x + x * 2
                         pixel_y = next_y + 8 + y * 2
-                        draw.rectangle([pixel_x, pixel_y, pixel_x + 1, pixel_y + 1], fill=1)
+                        self.context["drawing"]["draw_area"](pixel_x, pixel_y, 2, 2, fill=255)
 
-        # Send to display
-        self.display_queue.put(("clear_base",))
-        self.display_queue.put(("draw_base_image", img, 0, 0))
+        # End batch to execute all drawing operations at once
+        self.context["drawing"]["end_batch"]()
         
     def draw_game_over(self):
-        img = Image.new("1", (128, 64), 0)
-        draw = ImageDraw.Draw(img)
+        # Use batching for improved performance
+        self.context["drawing"]["begin_batch"]()
+        
+        # Clear the screen first
+        self.context["drawing"]["clear_screen"]()
         
         font = self.context["fonts"]["bold"]
         small_font = self.context["fonts"]["default"]
@@ -329,29 +385,28 @@ class App(AppBase):
         # Game Over text
         game_over_text = "GAME OVER"
         text_width, text_height = self.context["get_text_size"](game_over_text, font)
-        draw.text((64 - text_width/2, y), game_over_text, font=font, fill=1)
+        self.context["drawing"]["draw_text"](game_over_text, 64 - text_width/2, y, font, fill=255)
         y += text_height + 2
         
         # Score
         score_text = f"Score: {self.score}"
         score_width, score_height = self.context["get_text_size"](score_text, small_font)
-        draw.text((64 - score_width/2, y), score_text, font=small_font, fill=1)
+        self.context["drawing"]["draw_text"](score_text, 64 - score_width/2, y, small_font, fill=255)
         y += score_height + 2
         
         # Level
         level_text = f"Level: {self.level} / {self.lines_cleared}"
         level_width, level_height = self.context["get_text_size"](level_text, small_font)
-        draw.text((64 - level_width/2, y), level_text, font=small_font, fill=1)
+        self.context["drawing"]["draw_text"](level_text, 64 - level_width/2, y, small_font, fill=255)
         y += level_height + 2
         
         # Instructions
         restart_text = "R: Retry / ESC: Exit"
         restart_width, restart_height = self.context["get_text_size"](restart_text, small_font)
-        draw.text((64 - restart_width/2, y), restart_text, font=small_font, fill=1)
+        self.context["drawing"]["draw_text"](restart_text, 64 - restart_width/2, y, small_font, fill=255)
         
-        # Send to display
-        self.display_queue.put(("clear_base",))
-        self.display_queue.put(("draw_base_image", img, 0, 0))
+        # End batch to execute all drawing operations at once
+        self.context["drawing"]["end_batch"]()
         
     def onkeyup(self, keycode):
         if self.state == self.PLAYING:
@@ -407,7 +462,6 @@ class App(AppBase):
                 
         # Global controls
         if keycode == "KEY_ESC":
-            self.display_queue.put(("set_screen", "Launcher", "Returning to launcher..."))
             self.context["app_manager"].swap_app_async("tetra", "launcher", update_rate_hz=20.0, delay=0.1)
             
     def stop(self):

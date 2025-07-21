@@ -124,6 +124,16 @@ class App(AppBase):
             cursor_height = 6
             self.draw["draw_overlay_area"](x, y-1, cursor_width, cursor_height, 255)
 
+    def redraw_cursor_only(self):
+        """Redraw only the cursor on the overlay layer without touching the base layer"""
+        # Clear only the cursor area of the overlay layer
+        cursor_width = 2  # Slightly wider to ensure we clear the old cursor
+        cursor_height = 8  # Slightly taller to ensure we clear the old cursor
+        self.draw["clear_overlay_area"](self.cursor_x - 1, self.cursor_y - 2, cursor_width, cursor_height)
+        
+        # Redraw cursor if visible
+        self.draw_cursor(self.cursor_x, self.cursor_y)
+
     def draw_help_text(self, content_y, wrapped_lines, font_small, line_height, has_suggestion, suggestion_y=None):
         """Draw help text at the bottom of the screen"""
         if has_suggestion:
@@ -444,37 +454,38 @@ class App(AppBase):
         self.draw_interface("Ready", "Start typing to see suggestions. Press [ESC] to return to launcher.")
 
     def update(self):
-        """Handle cursor blinking"""
+        """Handle cursor blinking and TTS status updates"""
         current_time = time.time()
-        need_redraw = False
+        cursor_blink_changed = False
+        tts_status_changed = False
         
         # Handle cursor blinking only when in input mode
         if current_time - self.cursor_blink_timer > self.cursor_blink_interval:
             self.cursor_visible = not self.cursor_visible
             self.cursor_blink_timer = current_time
             
-            # Only redraw if we're in input mode (have text or explicitly in input mode)
+            # Only mark cursor blink change if we're in input mode
             if self._in_input_mode or self.currentline:
-                need_redraw = True
-        
-        # Always redraw if TTS is active to ensure icon visibility
-        if self.tts_active:
-            need_redraw = True
+                cursor_blink_changed = True
         
         # Store previous TTS state to detect changes
         if not hasattr(self, 'prev_tts_active'):
             self.prev_tts_active = False
             self.prev_tts_state = "idle"
         
-        # Force redraw when TTS state changes
+        # Check if TTS state changed
         if (self.tts_active != self.prev_tts_active or 
             self.tts_state != self.prev_tts_state):
-            need_redraw = True
+            tts_status_changed = True
             self.prev_tts_active = self.tts_active
             self.prev_tts_state = self.tts_state
         
-        # Redraw if needed
-        if need_redraw:
+        # Handle different types of updates
+        if cursor_blink_changed and not tts_status_changed:
+            # Only cursor changed - just update overlay layer
+            self.redraw_cursor_only()
+        elif tts_status_changed:
+            # TTS status changed - need full redraw for status indicators
             if self._in_input_mode or self.currentline:
                 self.draw_interface("Input", "")
             else:

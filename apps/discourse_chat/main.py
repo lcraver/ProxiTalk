@@ -15,7 +15,6 @@ import io
 class App(AppBase):
     def __init__(self, context):
         super().__init__(context)
-        self.display_queue = context["display_queue"]
         self.width = context["screen_width"]
         self.height = context["screen_height"]
         self.context = context
@@ -710,14 +709,36 @@ class App(AppBase):
             spinner_area_width = 12
             spinner_area_height = 6
             
+            # Use batching for spinner update
+            self.context["drawing"]["begin_batch"]()
+            
             # Clear the spinner area with black background
-            self.display_queue.put(("draw_base_area", spinner_x, spinner_y, spinner_area_width, spinner_area_height, 0))
+            self.context["drawing"]["draw_area"](spinner_x, spinner_y, spinner_area_width, spinner_area_height, 0)
             
             # Draw the animated spinner
             spinner_chars = ["|", "/", "-", "\\"]
             spinner_index = (getattr(self, 't', 0) // 2) % len(spinner_chars)
             spinner_char = spinner_chars[spinner_index]
-            self.display_queue.put(("draw_base_text", font, f"[{spinner_char}]", spinner_x, spinner_y, 255))
+            self.context["drawing"]["draw_text"](f"[{spinner_char}]", spinner_x, spinner_y, font)
+            
+            self.context["drawing"]["end_batch"]()
+        else:
+            # Clear spinner area when not loading (ensures spinner disappears)
+            if hasattr(self, '_was_loading') and self._was_loading:
+                spinner_x = self.width - 12
+                spinner_y = 1
+                spinner_area_width = 12
+                spinner_area_height = 6
+                
+                self.context["drawing"]["begin_batch"]()
+                self.context["drawing"]["draw_area"](spinner_x, spinner_y, spinner_area_width, spinner_area_height, 0)
+                self.context["drawing"]["end_batch"]()
+                
+                self._was_loading = False
+                self.needs_redraw = True  # Trigger a full refresh to show messages
+        
+        # Track loading state for spinner cleanup
+        self._was_loading = self.loading
         
         # Update animated GIFs in messages (if any)
         self.update_animated_gifs()
@@ -789,13 +810,13 @@ class App(AppBase):
                                 
                                 # Clear only the scaled image area
                                 x_offset = (self.width - new_width) // 2
-                                self.display_queue.put(("draw_base_area", x_offset, y_pos, new_width, new_height, 0))
-                                self.display_queue.put(("draw_base_image", scaled_image, x_offset, y_pos))
+                                self.context["drawing"]["draw_area"](x_offset, y_pos, new_width, new_height, 0)
+                                self.context["drawing"]["draw_image"](scaled_image, x_offset, y_pos)
                                 y_pos += new_height + 2
                             else:
                                 # Clear only the original image area
-                                self.display_queue.put(("draw_base_area", x_offset, y_pos, img_width, img_height, 0))
-                                self.display_queue.put(("draw_base_image", current_image, x_offset, y_pos))
+                                self.context["drawing"]["draw_area"](x_offset, y_pos, img_width, img_height, 0)
+                                self.context["drawing"]["draw_image"](current_image, x_offset, y_pos)
                                 y_pos += img_height + 2
                         else:
                             # Not enough space, skip
@@ -822,25 +843,43 @@ class App(AppBase):
     def update_input_area(self):
         """Update only the input area for cursor blinking"""
         if self.input_mode:
-            # Calculate input area bounds
-            input_y = self.height - 12
+            # For cursor blinking, we only need to clear and redraw the cursor on overlay
+            # The base layer with text remains unchanged
             font = self.context["fonts"]["small"]
             line_height = 5
             
-            # Calculate the area that needs to be redrawn (input area only)
+            # Calculate cursor position
+            max_input_width = 28
+            prefix = "Say: "
+            content_width = max_input_width - len(prefix)
+            wrapped_lines = self.wrap_text(self.input_buffer, content_width)
             max_input_lines = 3
-            bg_height = (max_input_lines + 1) * line_height + 4
-            bg_y = input_y - (max_input_lines - 1) * line_height - 2
+            display_lines = wrapped_lines[-max_input_lines:] if len(wrapped_lines) > max_input_lines else wrapped_lines
             
-            # Clear only the input area
-            self.display_queue.put(("draw_base_area", 0, bg_y, self.width, bg_height, 0))
-            
-            # Redraw just the input area
-            self.draw_input_area()
+            if display_lines:
+                input_y = self.height - 12
+                start_y = input_y - (len(display_lines) - 1) * line_height
+                last_line_y = start_y + (len(display_lines) - 1) * line_height
+                last_line = display_lines[-1]
+                cursor_prefix = prefix if len(display_lines) == 1 else " " * len(prefix)
+                
+                # Calculate cursor position
+                cursor_text = cursor_prefix + last_line
+                text_width, _ = self.context["get_text_size"](cursor_text, font)
+                cursor_x = 2 + text_width
+                
+                # Clear the overlay area where cursor might be (wider area to ensure we clear it)
+                self.context["drawing"]["clear_overlay_area"](cursor_x - 2, last_line_y - 1, 4, line_height + 1)
+                
+                # Draw cursor if visible
+                if self.cursor_visible and cursor_x < self.width - 2:
+                    self.context["drawing"]["draw_overlay_area"](cursor_x, last_line_y, 1, line_height - 1, 0)
     
     def refresh_display(self):
         """Refresh the entire display (full redraw)"""
-        self.display_queue.put(("clear_base",))
+        self.context["drawing"]["begin_batch"]()
+        self.context["drawing"]["clear_screen"]()
+        self.context["drawing"]["clear_overlay_area"](0, 0, self.width, self.height)  # Clear overlay as well
         
         font = self.context["fonts"]["small"]
         line_height = 5
@@ -855,17 +894,14 @@ class App(AppBase):
             spinner_index = (getattr(self, 't', 0) // 2) % len(spinner_chars)  # Rotate every 0.1 seconds at 20Hz
             spinner_char = spinner_chars[spinner_index]
             spinner_x = self.width - 12  # Position in top right
-            self.display_queue.put(("draw_base_text", font, f"[{spinner_char}]", spinner_x, 1, 255))
-        
-        # # Draw separator line
-        # self.display_queue.put(("draw_base_text", font, "-" * 20, 2, 6, 255))
+            self.context["drawing"]["draw_text"](f"[{spinner_char}]", spinner_x, 1, font)
         
         if self.error_message and not self.loading:
             # Show error message only when not loading
             lines = self.wrap_text(self.error_message, 28)  # Slightly less than max for error messages
             y_pos = 12
             for line in lines[:3]:  # Show max 3 lines of error
-                self.display_queue.put(("draw_base_text", font, line, 2, y_pos, 255))
+                self.context["drawing"]["draw_text"](line, 2, y_pos, font)
                 y_pos += line_height
             
             # Show configuration instructions if no credentials
@@ -882,7 +918,7 @@ class App(AppBase):
                 ]
                 for line in config_lines:
                     if y_pos < self.height - 25:  # Leave room for status
-                        self.display_queue.put(("draw_base_text", font, line, 2, y_pos, 255))
+                        self.context["drawing"]["draw_text"](line, 2, y_pos, font)
                         y_pos += line_height
             else:
                 # Show note about real implementation
@@ -893,15 +929,17 @@ class App(AppBase):
                     "or proper authentication."
                 ]
                 for line in note_lines:
-                    self.display_queue.put(("draw_base_text", font, line, 2, y_pos, 255))
+                    self.context["drawing"]["draw_text"](line, 2, y_pos, font)
                     y_pos += line_height
                 
-        else:
-            # Always show messages (even when loading)
+        elif self.messages or self.loading:
+            # Show messages when we have them OR when loading (to show "Loading messages...")
             self.draw_messages()
         
         # Draw input area
         self.draw_input_area()
+        
+        self.context["drawing"]["end_batch"]()
     
     def draw_messages(self):
         """Draw the chat messages ensuring latest messages are visible above input area"""
@@ -916,15 +954,12 @@ class App(AppBase):
         
         available_height = bottom_y - top_y
         
-        # draw a box around the message area
-        # self.display_queue.put(("draw_base_area", 0, top_y, self.width, available_height, 255))
-        
         if not self.messages:
             # if loading show loading message
             if self.loading:
-                self.display_queue.put(("draw_base_text", font, "Loading messages...", 2, top_y))
+                self.context["drawing"]["draw_text"]("Loading messages...", 2, top_y, font)
             else:
-                self.display_queue.put(("draw_base_text", font, "No messages yet", 2, top_y))
+                self.context["drawing"]["draw_text"]("No messages yet", 2, top_y, font)
             return
         
         # Calculate optimal text width based on screen size
@@ -991,16 +1026,16 @@ class App(AppBase):
                     bg_width = text_width + 2  # Add some padding
                     
                     # Draw white background for username line
-                    self.display_queue.put(("draw_base_area", 0, y_pos, bg_width, line_height-1, 255))
+                    self.context["drawing"]["draw_area"](0, y_pos-1, bg_width+1, line_height, 255)
                     
                     # Draw username/time text in black on white background
-                    self.display_queue.put(("draw_base_text", font, line, 2, y_pos, 0))
+                    self.context["drawing"]["draw_text"](line, 2, y_pos, font, 0)
                     y_pos += line_height
             
             # Draw content lines (indented)
             for content_line in msg_data['content_lines']:
                 if y_pos < bottom_y:  # Make sure we don't draw into input area
-                    self.display_queue.put(("draw_base_text", font, f" {content_line}", 2, y_pos))
+                    self.context["drawing"]["draw_text"](f" {content_line}", 2, y_pos, font)
                     y_pos += line_height
             
             # Draw images if any are available
@@ -1035,15 +1070,15 @@ class App(AppBase):
                                 
                                 # Re-center horizontally
                                 x_offset = (self.width - new_width) // 2
-                                self.display_queue.put(("draw_base_image", scaled_image, x_offset, y_pos))
+                                self.context["drawing"]["draw_image"](scaled_image, x_offset, y_pos)
                                 y_pos += new_height + 2
                             else:
                                 # Image fits as-is
-                                self.display_queue.put(("draw_base_image", current_image, x_offset, y_pos))
+                                self.context["drawing"]["draw_image"](current_image, x_offset, y_pos)
                                 y_pos += img_height + 2  # Add small gap after image
                         else:
                             # Not enough space for image, show placeholder
-                            self.display_queue.put(("draw_base_text", font, " [Image]", 2, y_pos))
+                            self.context["drawing"]["draw_text"](" [Image]", 2, y_pos, font)
                             y_pos += line_height
                             y_pos += line_height
             
@@ -1072,10 +1107,10 @@ class App(AppBase):
                 indicator_y = scrollbar_top + int(scroll_ratio * usable_height)
                 
                 # Draw scrollbar background (light gray track)
-                self.display_queue.put(("draw_base_area", scrollbar_x+2, scrollbar_top, 0, scrollbar_height, 255))
+                self.context["drawing"]["draw_area"](scrollbar_x+2, scrollbar_top, 1, scrollbar_height, 255)
                 
                 # Draw scroll indicator (dark gray/black)
-                self.display_queue.put(("draw_base_area", scrollbar_x, indicator_y, 2, indicator_height, 255))
+                self.context["drawing"]["draw_area"](scrollbar_x, indicator_y, 2, indicator_height, 255)
     
     def draw_input_area(self):
         """Draw the input area"""
@@ -1105,7 +1140,7 @@ class App(AppBase):
             bg_y = start_y - 2  # Start background slightly above text
             
             # Draw white background for input area
-            self.display_queue.put(("draw_base_area", 0, bg_y, bg_width, bg_height, 255))
+            self.context["drawing"]["draw_area"](0, bg_y, bg_width, bg_height, 255)
             
             # Draw the input lines
             for i, line in enumerate(display_lines):
@@ -1121,7 +1156,7 @@ class App(AppBase):
                 if len(display_text) > max_input_width:
                     display_text = display_text[:max_input_width-3] + "..."
                 
-                self.display_queue.put(("draw_base_text", font, display_text, 2, y, 0))  # Black text on white background
+                self.context["drawing"]["draw_text"](display_text, 2, y, font, 0)  # Black text on white background
             
             # Add cursor indicator on the last line (blinking vertical line)
             if len(display_lines) > 0 and self.cursor_visible:
@@ -1136,8 +1171,8 @@ class App(AppBase):
                 cursor_x = 2 + text_width
                 
                 if cursor_x < self.width - 2:  # Make sure cursor fits on screen
-                    # Draw cursor as a black vertical line (similar to code editor)
-                    self.display_queue.put(("draw_base_area", cursor_x, last_line_y, 1, line_height - 1, 0))
+                    # Draw cursor as a black vertical line on overlay layer (not base layer)
+                    self.context["drawing"]["draw_overlay_area"](cursor_x, last_line_y, 1, line_height - 1, 0)
             
             # Show character count and help text below input area (calculate properly)
             char_count = len(self.input_buffer)
@@ -1145,7 +1180,7 @@ class App(AppBase):
             help_text = f"({char_count}/200) Enter=Send ESC=Cancel"
             if len(help_text) > max_input_width:
                 help_text = f"({char_count}/200) Enter/ESC"
-            self.display_queue.put(("draw_base_text", font, help_text, 2, help_y, 0))  # Black text on white background
+            self.context["drawing"]["draw_text"](help_text, 2, help_y, font, 0)  # Black text on white background
             
         else:
             # Show help with white background
@@ -1155,8 +1190,8 @@ class App(AppBase):
             status_y = self.height - 7
             
             # Draw white background area
-            self.display_queue.put(("draw_base_area", 0, input_y - 1, self.width, bg_height * 2, 255))  # White background
-            self.display_queue.put(("draw_base_text", font, help_text, 2, input_y, 0))  # Black text on white background
+            self.context["drawing"]["draw_area"](0, input_y - 1, self.width, bg_height * 2, 255)  # White background
+            self.context["drawing"]["draw_text"](help_text, 2, input_y, font, 0)  # Black text on white background
             
             # Draw status line
             if self.input_mode:
@@ -1167,7 +1202,7 @@ class App(AppBase):
                 status = f"{self.credentials['username'][:4]} UP/DN:Scroll I:Input ESC:Quit"
             else:
                 status = f"{self.credentials['username'][:4]} [ERROR] ESC:Quit"
-            self.display_queue.put(("draw_base_text", font, status, 2, status_y, 0))
+            self.context["drawing"]["draw_text"](status, 2, status_y, font, 0)
     
     def wrap_text(self, text, width):
         """Wrap text to specified width, preserving trailing spaces"""
@@ -1361,13 +1396,8 @@ class App(AppBase):
     
     def return_to_launcher(self):
         """Return to the launcher app"""
-        self.display_queue.put(("set_screen", "Launcher", "Returning to Launcher..."))
-        
-        if "app_manager" in self.context:
-            app_manager = self.context["app_manager"]
-            app_manager.swap_app_async("discourse_chat", "launcher", update_rate_hz=20.0, delay=0.1)
-        else:
-            print("[Discourse Chat] No app_manager available in context")
+        app_manager = self.context["app_manager"]
+        app_manager.swap_app_async("discourse_chat", "launcher", update_rate_hz=20.0, delay=0.1)
     
     def stop(self):
         """Clean up when app stops"""
