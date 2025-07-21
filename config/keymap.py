@@ -15,7 +15,8 @@ key_map = {
     'KEY_COMMA': ',', 'KEY_DOT': '.', 'KEY_SLASH': '/', 'KEY_BACKSLASH': '\\',
     'KEY_QUOTE': '"', 'KEY_QUESTION': '?', 'KEY_EXCLAMATION': '!',
     'KEY_AT': '@', 'KEY_HASH': '#', 'KEY_DOLLAR': '$',
-    'KEY_PIPE': '|', 'KEY_GRAVE': '`', 'KEY_TILDE': '~'
+    'KEY_PIPE': '|', 'KEY_GRAVE': '`', 'KEY_TILDE': '~',
+    'KEY_UNDERSCORE': '_', 'KEY_PLUS': '+',
 }
 
 shift_key_map = {
@@ -23,4 +24,6 @@ shift_key_map = {
     'KEY_BACKSLASH': 'KEY_PIPE',
     'KEY_GRAVE': 'KEY_TILDE',
     'KEY_SPACE': 'KEY_TAB',
+    'KEY_MINUS': 'KEY_UNDERSCORE',
+    'KEY_EQUAL': 'KEY_PLUS',
 }

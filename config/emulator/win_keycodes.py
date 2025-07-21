@@ -56,6 +56,10 @@ WIN_TO_LINUX_KEYCODE = {
     'backslash': 'KEY_BACKSLASH',
     '\\': 'KEY_BACKSLASH',
     '|': 'KEY_BACKSLASH',
+    '_': 'KEY_UNDERSCORE',
+    '+': 'KEY_PLUS',
+    '=': 'KEY_EQUAL',
+    '-': 'KEY_MINUS',
 
     'volume up': 'KEY_VOLUMEUP',
     'volume down': 'KEY_VOLUMEDOWN',

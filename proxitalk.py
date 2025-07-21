@@ -1434,7 +1434,8 @@ def main():
 
     currentline = ""
 
-    shift_key = 'KEY_LEFTSHIFT'
+    shift_key_left = 'KEY_LEFTSHIFT'
+    shift_key_right = 'KEY_RIGHTSHIFT'
     keys_pressed = set()
     
     context = {
@@ -1565,16 +1566,22 @@ def main():
                             
                             keys_pressed.add(keycode)
                             
-                            if shift_key in keys_pressed:
-                                keycode = shift_key_map.get(keycode, None)
+                            if shift_key_left in keys_pressed or shift_key_right in keys_pressed:
+                                print("Key pressed + shift:", keycode)
+                                tmp = shift_key_map.get(keycode, None)
+                                if tmp is not None:
+                                    keycode = tmp
                             app_manager.distribute_event("onkeydown", keycode)
                             
                         elif key_event.keystate == 0: # Key up
                             if keycode in keys_pressed:
                                 keys_pressed.remove(keycode)
-                                
-                                if shift_key in keys_pressed:
-                                    keycode = shift_key_map.get(keycode, None)
+
+                                if shift_key_left in keys_pressed or shift_key_right in keys_pressed:
+                                    print("Key pressed + shift:", keycode)
+                                    tmp = shift_key_map.get(keycode, None)
+                                    if tmp is not None:
+                                        keycode = tmp
                                 app_manager.distribute_event("onkeyup", keycode)
                             
             except OSError as e:

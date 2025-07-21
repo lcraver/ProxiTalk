@@ -13,11 +13,11 @@ class App(AppBase):
             '.....',
         ],
         [  # 1: ghost
-            ' ### ',
-            '#.#.#',
-            '#####',
-            '#.#.#',
-            '#   #',
+            '.........',
+            '.#.#.###.',
+            '.###..#..',
+            '.#.#.###.',
+            '.........',
         ],
         [  # 2: diamond
             '   .   ',
@@ -33,7 +33,7 @@ class App(AppBase):
     MINIMAP_SIZE = 20  # Smaller minimap size in pixels
     MINIMAP_MARGIN = 2
 
-    FOG_START = 16  # Distance before fog starts
+    FOG_START = 0  # Distance before fog starts
     # 4x4 Bayer matrix for ordered dithering
     BAYER_4x4 = [
         [ 0,  8,  2, 10],
@@ -49,21 +49,21 @@ class App(AppBase):
         self.height = 64
         self.TILE = 8
         self.MAP = [
-            '############',
-            '#..........#',
-            '#..##..##..#',
-            '#..........#',
-            '#.2........#',
-            '###..#######',
-            '#........###',
-            '#.....0..###',
-            '#........###',
-            '############',
+            '###############',
+            '#.............#',
+            '#..##...##....#',
+            '#.......##....#',
+            '#.2...........#',
+            '###..####..####',
+            '#.....0.#..1..#',
+            '#.......#.....#',
+            '#.............#',
+            '###############',
         ]
         self.FOV = math.pi / 3
         self.HALF_FOV = self.FOV / 2
         self.NUM_RAYS = 60
-        self.MAX_DEPTH = 120
+        self.MAX_DEPTH = 100
         self.DELTA_ANGLE = self.FOV / self.NUM_RAYS
         self.DIST = self.NUM_RAYS / (2 * math.tan(self.HALF_FOV))
         self.PROJ_COEFF = 2 * self.DIST * self.TILE
@@ -104,18 +104,31 @@ class App(AppBase):
         # --- 1. Raycast walls, store wall depths for sprite occlusion ---
         cur_angle = player_angle - self.HALF_FOV
         wall_depths = [self.MAX_DEPTH] * self.NUM_RAYS
+        last_wall_cell = None
+        last_y0 = None
+        last_y1 = None
         for ray in range(self.NUM_RAYS):
             sin_a = math.sin(cur_angle)
             cos_a = math.cos(cur_angle)
+            hit_wall = False
             for depth in range(self.MAX_DEPTH):
                 x = player_pos[0] + depth * cos_a
                 y = player_pos[1] + depth * sin_a
                 i, j = self.mapping(x, y)
+                # Bounds check for i, j
+                if not (0 <= j < len(self.MAP) and 0 <= i < len(self.MAP[0])):
+                    break
                 if self.MAP[j][i] == '#':
                     depth_corr = depth * math.cos(player_angle - cur_angle)
                     proj_height = self.PROJ_COEFF / (depth_corr + 0.0001)
+                    # Clamp projected height to screen height
+                    proj_height = min(proj_height, self.height)
                     y0 = int(self.height // 2 - proj_height // 2)
                     y1 = int(self.height // 2 + proj_height // 2)
+                    # Clamp y0/y1 to screen bounds
+                    y0 = max(y0, 0)
+                    y1 = min(y1, self.height)
+                    # ... wall rendering code ...
                     # Draw horizontal white border at the top of the wall
                     if y0 > 0:
                         for sx in range(self.SCALE):
@@ -131,15 +144,63 @@ class App(AppBase):
                     else:
                         # Fog: further walls are more dithered (less visible)
                         fog = min(1.0, max(0.0, ((depth - self.FOG_START) / (self.MAX_DEPTH - self.FOG_START))))
+                        slice_height = y1 - y0 - 2
                         for sx in range(self.SCALE):
-                            for y in range(y0+1, y1-1):
-                                bx = (ray * self.SCALE + sx) % 4
-                                by = y % 4
-                                threshold = self.BAYER_4x4[by][bx] / 16.0
-                                if fog < threshold:
-                                    draw.point((ray * self.SCALE + sx, y), fill=1)
+                            # For tall slices, use a single line for fog
+                            if slice_height > 16:
+                                # Use average fog for the slice
+                                avg_fog = fog
+                                if avg_fog < 0.5:
+                                    draw.line([(ray * self.SCALE + sx, y0+1), (ray * self.SCALE + sx, y1-2)], fill=1)
+                                # else: skip drawing (too foggy)
+                            else:
+                                for y in range(y0+1, y1-1):
+                                    bx = (ray * self.SCALE + sx) % 4
+                                    by = y % 4
+                                    threshold = self.BAYER_4x4[by][bx] / 16.0
+                                    if fog < threshold:
+                                        draw.point((ray * self.SCALE + sx, y), fill=1)
+                    # Draw a black vertical line if this wall cell is different from the previous wall cell
+                    # and they are NOT physically adjacent (not neighbors in any direction),
+                    # OR if they are adjacent diagonally (corner)
+                    draw_corner = False
+                    if last_wall_cell is not None and last_wall_cell != (i, j):
+                        li, lj = last_wall_cell
+                        di = abs(li - i)
+                        dj = abs(lj - j)
+                        # Not adjacent in any direction
+                        not_adjacent = (di > 1 or dj > 1)
+                        # Adjacent diagonally (corner)
+                        is_corner = (di == 1 and dj == 1)
+                        if not_adjacent or is_corner:
+                            draw_corner = True
+                    # Additionally, always draw a line at a visible wall corner (diagonal neighbor is wall, but not direct neighbor)
+                    # Check all four corners
+                    for di, dj, edge in [(-1, -1, 'left'), (1, -1, 'right'), (-1, 1, 'left'), (1, 1, 'right')]:
+                        ni, nj = i + di, j + dj
+                        if 0 <= ni < len(self.MAP[0]) and 0 <= nj < len(self.MAP):
+                            if self.MAP[nj][ni] == '#':
+                                # Only draw if the direct neighbor in i or j is not a wall
+                                if (self.MAP[j][ni] != '#' and self.MAP[nj][i] != '#'):
+                                    draw_corner = True
+                                    break
+                    if draw_corner:
+                        x = ray * self.SCALE  # Only the leftmost pixel of the slice
+                        y_start = min(y0, last_y0) if last_y0 is not None else y0
+                        y_end = max(y1, last_y1) if last_y1 is not None else y1
+                        y_start = max(y_start, 0)
+                        y_end = min(y_end, self.height)
+                        draw.line([(x, y_start), (x, y_end-1)], fill=0)
+                    last_wall_cell = (i, j)
+                    last_y0 = y0
+                    last_y1 = y1
                     wall_depths[ray] = depth_corr
+                    hit_wall = True
                     break  # Stop at first wall hit
+            if not hit_wall:
+                last_wall_cell = None
+                last_y0 = None
+                last_y1 = None
             cur_angle += self.DELTA_ANGLE
 
         # --- 2. Draw all sprites (billboarded, always face player) ---
@@ -250,8 +311,8 @@ class App(AppBase):
         cell_w = (size - 2 * margin) / map_cols
         cell_h = (size - 2 * margin) / map_rows
 
-        # Draw map outline
-        draw.rectangle([0, 0, size-1, size-1], outline=1, fill=0)
+        # Fill minimap area with black background (no border)
+        draw.rectangle([0, 0, size-1, size-1], fill=0)
 
         # Draw map cells
         for j, row in enumerate(self.MAP):
