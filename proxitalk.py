@@ -375,6 +375,217 @@ def play_sfx(path: str):
 
 # --- Music --- #
 
+class AudioStreamer:
+    def __init__(self):
+        self.is_streaming = False
+        self.stream_thread = None
+        self._stop_event = threading.Event()
+        self.current_audio_file = None
+        self.start_time = 0
+        self.pause_time = 0
+        self.is_paused = False
+        self.volume = 0.7
+        
+    def start_stream(self, audio_file_path: str, start_offset: float = 0.0):
+        """Start streaming audio from a file with optional offset"""
+        if not os.path.isfile(audio_file_path):
+            print(f"[AudioStream] File not found: {audio_file_path}", flush=True)
+            return False
+        
+        # Check if pygame mixer is initialized
+        if IS_WINDOWS:
+            try:
+                mixer_info = pygame.mixer.get_init()
+                if mixer_info is None:
+                    print(f"[AudioStream] Pygame mixer not initialized, initializing...", flush=True)
+                    pygame.mixer.init(frequency=22050, size=-16, channels=1)
+                    mixer_info = pygame.mixer.get_init()
+                
+                print(f"[AudioStream] Pygame mixer settings: {mixer_info}", flush=True)
+            except Exception as e:
+                print(f"[AudioStream] Error checking pygame mixer: {e}", flush=True)
+                return False
+        
+        print(f"[AudioStream] Starting stream for: {audio_file_path}", flush=True)
+        
+        self.stop_stream()
+        self._stop_event.clear()
+        self.current_audio_file = audio_file_path
+        self.is_streaming = True
+        self.is_paused = False
+        self.start_time = time.time() - start_offset
+        self.pause_time = 0
+        
+        if IS_WINDOWS:
+            try:
+                self.stream_thread = threading.Thread(
+                    target=self._stream_audio_loop, 
+                    args=(audio_file_path, start_offset), 
+                    daemon=True
+                )
+                self.stream_thread.start()
+                print(f"[AudioStream] Stream thread started", flush=True)
+                return True
+            except Exception as e:
+                print(f"[AudioStream] Error starting stream thread: {e}", flush=True)
+                self.is_streaming = False
+                return False
+        else:
+            print("[AudioStream] Audio streaming only supported on Windows", flush=True)
+            return False
+    
+    def _stream_audio_loop(self, audio_file_path: str, start_offset: float):
+        """Internal method to handle audio streaming"""
+        try:
+            print(f"[AudioStream] Loading audio file: {audio_file_path}", flush=True)
+            
+            # Load the entire audio file
+            sound = pygame.mixer.Sound(audio_file_path)
+            sound.set_volume(self.volume)
+            
+            print(f"[AudioStream] Starting playback (offset: {start_offset}s)", flush=True)
+            
+            # Start playback - pygame doesn't support start offset directly
+            # For now, we'll play from the beginning
+            channel = sound.play()
+            
+            if not channel:
+                print("[AudioStream] Failed to get audio channel", flush=True)
+                return
+            
+            print("[AudioStream] Audio playback started successfully", flush=True)
+            
+            # Monitor playback and handle pause/resume
+            while channel.get_busy() and not self._stop_event.is_set() and self.is_streaming:
+                if self.is_paused:
+                    channel.pause()
+                    print("[AudioStream] Channel paused", flush=True)
+                    # Wait while paused
+                    while self.is_paused and not self._stop_event.is_set():
+                        time.sleep(0.1)
+                    if not self._stop_event.is_set() and self.is_streaming:
+                        channel.unpause()
+                        print("[AudioStream] Channel unpaused", flush=True)
+                
+                pygame.time.wait(100)
+            
+            print("[AudioStream] Audio playback finished", flush=True)
+            
+        except pygame.error as e:
+            print(f"[AudioStream] Pygame error streaming audio '{audio_file_path}': {e}", flush=True)
+        except Exception as e:
+            print(f"[AudioStream] Error streaming audio '{audio_file_path}': {e}", flush=True)
+        finally:
+            self.is_streaming = False
+            self.is_paused = False
+    
+    def pause_stream(self):
+        """Pause the current audio stream"""
+        if self.is_streaming and not self.is_paused:
+            self.is_paused = True
+            self.pause_time = time.time()
+            print("[AudioStream] Audio paused", flush=True)
+    
+    def resume_stream(self):
+        """Resume the paused audio stream"""
+        if self.is_streaming and self.is_paused:
+            self.is_paused = False
+            # Adjust start time to account for pause duration
+            if self.pause_time > 0:
+                pause_duration = time.time() - self.pause_time
+                self.start_time += pause_duration
+            print("[AudioStream] Audio resumed", flush=True)
+    
+    def stop_stream(self):
+        """Stop the current audio stream"""
+        self.is_streaming = False
+        self.is_paused = False
+        self._stop_event.set()
+        
+        # Stop all pygame channels
+        if IS_WINDOWS:
+            pygame.mixer.stop()
+        
+        if self.stream_thread and self.stream_thread.is_alive():
+            self.stream_thread.join(timeout=1.0)
+        
+        self.current_audio_file = None
+        self.start_time = 0
+        self.pause_time = 0
+        print("[AudioStream] Audio stream stopped", flush=True)
+    
+    def set_stream_volume(self, volume: float):
+        """Set the streaming audio volume (0.0 to 1.0)"""
+        self.volume = max(0.0, min(1.0, volume))
+        print(f"[AudioStream] Volume set to {self.volume:.2f}", flush=True)
+    
+    def get_current_position(self) -> float:
+        """Get the current playback position in seconds"""
+        if not self.is_streaming:
+            return 0.0
+        
+        if self.is_paused and self.pause_time > 0:
+            return self.pause_time - self.start_time
+        else:
+            return time.time() - self.start_time
+    
+    def is_stream_playing(self) -> bool:
+        """Check if audio is currently streaming"""
+        return self.is_streaming and not self.is_paused
+    
+    def is_stream_paused(self) -> bool:
+        """Check if audio stream is paused"""
+        return self.is_streaming and self.is_paused
+    
+    def get_stream_info(self) -> dict:
+        """Get information about the current stream"""
+        return {
+            "file": self.current_audio_file,
+            "is_playing": self.is_stream_playing(),
+            "is_paused": self.is_stream_paused(),
+            "current_position": self.get_current_position(),
+            "volume": self.volume
+        }
+
+# Global audio streamer
+audio_streamer = AudioStreamer()
+
+def start_audio_stream(audio_file_path: str, start_offset: float = 0.0):
+    """Start streaming audio from a file"""
+    return audio_streamer.start_stream(audio_file_path, start_offset)
+
+def pause_audio_stream():
+    """Pause the current audio stream"""
+    audio_streamer.pause_stream()
+
+def resume_audio_stream():
+    """Resume the paused audio stream"""
+    audio_streamer.resume_stream()
+
+def stop_audio_stream():
+    """Stop the current audio stream"""
+    audio_streamer.stop_stream()
+
+def set_audio_stream_volume(volume: float):
+    """Set the streaming audio volume"""
+    audio_streamer.set_stream_volume(volume)
+
+def get_audio_stream_position() -> float:
+    """Get current playback position in seconds"""
+    return audio_streamer.get_current_position()
+
+def is_audio_stream_playing() -> bool:
+    """Check if audio stream is playing"""
+    return audio_streamer.is_stream_playing()
+
+def is_audio_stream_paused() -> bool:
+    """Check if audio stream is paused"""
+    return audio_streamer.is_stream_paused()
+
+def get_audio_stream_info() -> dict:
+    """Get information about current audio stream"""
+    return audio_streamer.get_stream_info()
+
 class MusicManager:
     def __init__(self):
         self.current_music = None
@@ -1452,6 +1663,16 @@ def main():
             "play_music": play_music,
             "stop_music": stop_music,
             "set_music_volume": set_music_volume,
+            # Audio streaming functions
+            "start_stream": start_audio_stream,
+            "pause_stream": pause_audio_stream,
+            "resume_stream": resume_audio_stream,
+            "stop_stream": stop_audio_stream,
+            "set_stream_volume": set_audio_stream_volume,
+            "get_stream_position": get_audio_stream_position,
+            "is_stream_playing": is_audio_stream_playing,
+            "is_stream_paused": is_audio_stream_paused,
+            "get_stream_info": get_audio_stream_info,
         },
         "fonts": {
             "small": fontSmall,

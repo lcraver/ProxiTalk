@@ -348,7 +348,13 @@ class App(AppBase):
             if item['is_dir']:
                 display_text = f"> {item['name']}"
             else:
-                display_text = f"{item['name']}"
+                # Check if it's a video file
+                _, ext = os.path.splitext(item['name'])
+                video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm']
+                if ext.lower() in video_extensions:
+                    display_text = f"* {item['name']}"  # * for video files
+                else:
+                    display_text = f"{item['name']}"
             
             # Truncate long names
             if len(display_text) > 30:
@@ -659,9 +665,22 @@ class App(AppBase):
                 else:
                     # Open file
                     filepath = os.path.join(self.browser_directory, selected_item['name'])
+                    
+                    # Check if it's a video file before changing mode
+                    _, ext = os.path.splitext(filepath)
+                    video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm']
+                    is_video = ext.lower() in video_extensions
+                    
+                    if is_video:
+                        print(f"[Code Editor] Video file selected, delegating to video handler")
+                    
                     self.open_file_direct(filepath)
-                    self.mode = "normal"
-                    self.mark_for_redraw()  # Mode change requires redraw
+                    
+                    # Only change mode back to normal if it's not a video file
+                    # (video files will trigger app swap, so we shouldn't change mode)
+                    if not is_video:
+                        self.mode = "normal"
+                        self.mark_for_redraw()  # Mode change requires redraw
             return
             
         if keycode == "KEY_UP" or keycode == "KEY_W":
@@ -724,9 +743,11 @@ class App(AppBase):
                         'path': item_path
                     })
                 else:
-                    # Only show text files and common code file extensions
+                    # Show text files, code files, and video files
                     _, ext = os.path.splitext(item)
-                    if ext.lower() in ['.txt', '.py', '.js', '.html', '.css', '.json', '.xml', '.md', '.cfg', '.ini', '.log', ''] or not ext:
+                    allowed_extensions = ['.txt', '.py', '.js', '.html', '.css', '.json', '.xml', '.md', '.cfg', '.ini', '.log', 
+                                        '.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm', '']
+                    if ext.lower() in allowed_extensions or not ext:
                         files.append({
                             'name': item,
                             'is_dir': False,
@@ -930,6 +951,30 @@ class App(AppBase):
         """Open a file directly using its full path"""
         try:
             if os.path.exists(filepath):
+                # Check if it's a video file
+                video_extensions = ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.webm']
+                file_ext = os.path.splitext(filepath)[1].lower()
+                
+                if file_ext in video_extensions:
+                    # Launch video player
+                    print(f"[Code Editor] Detected video file: {filepath}")
+                    print(f"[Code Editor] Available apps: {[app['name'] for app in self.context['apps']['all']]}")
+                    self.speak(f"Opening video {os.path.basename(filepath)}")
+                    
+                    # Store the file path for the video player to pick up
+                    if not hasattr(self.context, 'pending_video_file'):
+                        self.context['pending_video_file'] = filepath
+                    else:
+                        self.context['pending_video_file'] = filepath
+                    
+                    print(f"[Code Editor] Stored video file path: {filepath}")
+                    
+                    # Swap to video player - it will check for pending_video_file
+                    self.context["app_manager"].swap_app_async("code_editor", "video_player", update_rate_hz=20.0, delay=0.1)
+                    print(f"[Code Editor] App swap requested")
+                    return
+                
+                # Regular text file opening
                 with open(filepath, 'r', encoding='utf-8') as f:
                     content = f.read()
                 
