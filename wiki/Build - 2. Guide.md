@@ -8,9 +8,6 @@ This guide covers the physical assembly and wiring connections needed to build a
 3. [Tools Needed](#tools-needed)
 4. [Safety Precautions](#safety-precautions)
 5. [Step-by-Step Assembly](#step-by-step-assembly)
-6. [Wiring Connections](#wiring-connections)
-7. [Testing and Troubleshooting](#testing-and-troubleshooting)
-8. [Final Assembly](#final-assembly)
 
 ## Required Components
 
@@ -36,7 +33,7 @@ The ProxiTalk case is designed to be 3D printed using PLA filament. The case fil
 
 ### Available Case Files
 
-The case consists of 5 separate parts located in the `../wiki/case-files/` directory:
+The case consists of 5 separate parts [located in the `../wiki/case-files/` directory](https://github.com/lcraver/ProxiTalk/tree/main/wiki/case-files):
 
 | File Name | Description | Purpose |
 |-----------|-------------|---------|
