@@ -46,6 +46,9 @@ The case consists of 5 separate parts [located in the `../wiki/case-files/` dire
 
 ## Step-by-Step Assembly
 
+Please refer to this image for all GPIO connections:
+![GPIO Connections](../wiki/imgs/build/GPIO%20Ref.png)
+
 ### Step 1: Audio Board Connection
 
 First, we'll attach the audio board to the Raspberry Pi.
