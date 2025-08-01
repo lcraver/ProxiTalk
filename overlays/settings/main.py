@@ -7,7 +7,7 @@ from PIL import Image, ImageDraw, ImageFont
 class App(AppBase):
     def __init__(self, context):
         super().__init__(context)
-        self.display_queue = context["display_queue"]
+        self.drawing = context["drawing"]
         self.MIN_VOL = 60
         self.MAX_VOL = 100
         self.UI_STEPS = 20
@@ -65,8 +65,8 @@ class App(AppBase):
         pos_x = 1
         pos_y = 64 - icon.height - 1  # Position at the bottom left, leaving space for the icon
         
-        self.display_queue.put(("clear_overlay_area", pos_x, pos_y, icon.width, icon.height))
-        self.display_queue.put(("draw_overlay_image", icon, pos_x, pos_y))
+        self.drawing["clear_overlay_area"](pos_x, pos_y, icon.width, icon.height)
+        self.drawing["draw_overlay_image"](icon, pos_x, pos_y)
         self._start_clear_timer(pos_x, pos_y, icon.width, icon.height)
 
     def generate_bar_icon(self, volume_percent, width=24, height=4, label=None):
@@ -102,8 +102,8 @@ class App(AppBase):
         pos_x = 1
         pos_y = 64 - icon.height - 1  # Position at the bottom left, leaving space for the icon
         
-        self.display_queue.put(("clear_overlay_area", pos_x, pos_y, icon.width, icon.height))
-        self.display_queue.put(("draw_overlay_image", icon, pos_x, pos_y))
+        self.drawing["clear_overlay_area"](pos_x, pos_y, icon.width, icon.height)
+        self.drawing["draw_overlay_image"](icon, pos_x, pos_y)
         self._start_clear_timer(pos_x, pos_y, icon.width, icon.height)
 
     def show_inversion_feedback(self, message):
@@ -119,8 +119,8 @@ class App(AppBase):
         pos_x = 1
         pos_y = 64 - img.height - 1  # Position at the bottom left
         
-        self.display_queue.put(("clear_overlay_area", pos_x, pos_y, img.width, img.height))
-        self.display_queue.put(("draw_overlay_image", img, pos_x, pos_y))
+        self.drawing["clear_overlay_area"](pos_x, pos_y, img.width, img.height)
+        self.drawing["draw_overlay_image"](img, pos_x, pos_y)
         self._start_clear_timer(pos_x, pos_y, img.width, img.height)
         
     def _start_clear_timer(self, x, y, width, height, delay=1.5):
@@ -134,14 +134,14 @@ class App(AppBase):
 
             def clear_later():
                 if not self.clear_icon_stop_flag.wait(delay):
-                    self.display_queue.put(("clear_overlay_area", x, y, width, height))
+                    self.drawing["clear_overlay_area"](x, y, width, height)
 
             self.clear_icon_thread = threading.Thread(target=clear_later, daemon=True)
             self.clear_icon_thread.start()
 
     def _clear_icon_delayed(self, x, y, width, height, delay=1.5):
         time.sleep(delay)
-        self.display_queue.put(("clear_overlay_area", x, y, width, height))
+        self.drawing["clear_overlay_area"](x, y, width, height)
 
     def get_volume_icon(self):
         return self.volume_icon

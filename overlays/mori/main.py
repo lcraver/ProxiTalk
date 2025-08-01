@@ -7,7 +7,7 @@ from PIL import Image, ImageDraw, ImageFont
 class App(AppBase):
     def __init__(self, context):
         super().__init__(context)
-        self.display_queue = context["display_queue"]
+        self.drawing = context["drawing"]
         self.width = context["screen_width"]
         self.height = context["screen_height"]
         self.font = context["fonts"]["small"]
@@ -126,10 +126,10 @@ class App(AppBase):
             # Clear any existing display
             if self.last_drawn_area:
                 x, y, w, h = self.last_drawn_area
-                self.display_queue.put(("clear_overlay_area", x, y, w, h))
+                self.drawing["clear_overlay_area"](x, y, w, h)
             
             # Display the countdown
-            self.display_queue.put(("draw_overlay_image", img, center_x, self.display_y))
+            self.drawing["draw_overlay_image"](img, center_x, self.display_y)
             
             # Remember the drawn area
             self.last_drawn_area = (center_x, self.display_y, text_width, text_height)
@@ -156,7 +156,7 @@ class App(AppBase):
 
             def clear_later():
                 if not self.clear_timer_stop_flag.wait(delay):
-                    self.display_queue.put(("clear_overlay_area", x, y, width, height))
+                    self.drawing["clear_overlay_area"](x, y, width, height)
                     self.last_drawn_area = None
 
             self.clear_timer_thread = threading.Thread(target=clear_later, daemon=True)
@@ -190,7 +190,7 @@ class App(AppBase):
         if not self.display_active and self.last_drawn_area:
             # Clear the display
             x, y, w, h = self.last_drawn_area
-            self.display_queue.put(("clear_overlay_area", x, y, w, h))
+            self.drawing["clear_overlay_area"](x, y, w, h)
             self.last_drawn_area = None
         print(f"[Life Countdown] Display {'enabled' if self.display_active else 'disabled'}")
     
@@ -242,6 +242,6 @@ class App(AppBase):
         # Clear any displayed countdown
         if self.last_drawn_area:
             x, y, w, h = self.last_drawn_area
-            self.display_queue.put(("clear_overlay_area", x, y, w, h))
+            self.drawing["clear_overlay_area"](x, y, w, h)
         
         print("[Life Countdown] Stopped")

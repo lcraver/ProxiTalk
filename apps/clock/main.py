@@ -4,7 +4,7 @@ import time
 class App(AppBase):
     def __init__(self, context):
         super().__init__(context)
-        self.display_queue = context["display_queue"]
+        self.drawing = context["drawing"]
         self.t = 0
         self.current_time = time.strftime("%H:%M:%S", time.localtime())
         self.play_sfx = context["audio"]["play_sfx"]
@@ -22,7 +22,7 @@ class App(AppBase):
         self.input_mode = None  # "minutes" or "seconds" when setting timer
 
     def start(self):
-        self.display_queue.put(("clear_base",))
+        self.drawing["clear_screen"]()
         self.update_clock()
 
     def update(self):
@@ -30,7 +30,7 @@ class App(AppBase):
         
         # Update every 20 ticks (every 1 second if update rate is 20Hz)
         if self.t % 20 == 0:
-            self.display_queue.put(("clear_base",))
+            self.drawing["clear_screen"]()
             
             if self.mode == "clock":
                 self.update_clock()
@@ -42,17 +42,16 @@ class App(AppBase):
         self.current_time = time.strftime("%H:%M:%S", time.localtime())
         
         # Get font and calculate position
-        font = self.context["fonts"]["large_bold"]
+        font = self.context["fonts"]["large"]
         font_width, font_height = self.context["get_text_size"](self.current_time, font)
         
         # Draw clock (convert to integers)
-        self.display_queue.put(("draw_base_text", font, self.current_time, 
-                              int((self.width/2)-(font_width/2)), int((self.height/2)-(font_height/2)-6)))
+        self.drawing["draw_text"](self.current_time, 
+                              int((self.width/2)-(font_width/2)), int((self.height/2)-(font_height/2)-6), font)
         
         # Draw mode indicator
         small_font = self.context["fonts"]["small"]
-        self.display_queue.put(("draw_base_text", small_font, "CLOCK - Press T for Timer", 
-                              4, 4))
+        self.drawing["draw_text"]("CLOCK - Press T for Timer", 4, 4, small_font)
         
         self.play_sfx(self.path + "tick.wav")
         
@@ -71,6 +70,9 @@ class App(AppBase):
                 self.play_sfx(self.path + "chime.wav")
                 self.context["tts"]["run"]("Timer finished!", background=True)
                 
+        # Use batching for better performance when drawing multiple text elements
+        self.drawing["begin_batch"]()
+        
         sub_text = None
         
         # Format display text
@@ -96,14 +98,14 @@ class App(AppBase):
         # Draw timer display (convert to integers)
         font = self.context["fonts"]["default"]
         font_width, font_height = self.context["get_text_size"](display_text, font)
-        self.display_queue.put(("draw_base_text", font, display_text,
-                              int((self.width/2)-(font_width/2)), 2))
+        self.drawing["draw_text"](display_text,
+                              int((self.width/2)-(font_width/2)), 2, font)
         
         if sub_text:
             sub_font = self.context["fonts"]["small"]
             sub_width, sub_height = self.context["get_text_size"](sub_text, sub_font)
-            self.display_queue.put(("draw_base_text", sub_font, sub_text,
-                                  int((self.width/2)-(sub_width/2)), font_height + 6))
+            self.drawing["draw_text"](sub_text,
+                                  int((self.width/2)-(sub_width/2)), font_height + 6, sub_font)
         
         # Draw instructions
         small_font = self.context["fonts"]["small"]
@@ -129,8 +131,11 @@ class App(AppBase):
         y_offset = 32
         for i, instruction in enumerate(instructions):
             width, height = self.context["get_text_size"](instruction, small_font)
-            self.display_queue.put(("draw_base_text", small_font, instruction, 
-                                  int(self.width / 2 - width / 2), y_offset + (i * 6)))
+            self.drawing["draw_text"](instruction, 
+                                  int(self.width / 2 - width / 2), y_offset + (i * 6), small_font)
+        
+        # Execute all drawing operations at once
+        self.drawing["end_batch"]()
         
         # Play tick sound for running timer
         if self.timer_running and self.timer_remaining > 0:

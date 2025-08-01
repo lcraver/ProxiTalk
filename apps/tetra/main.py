@@ -377,7 +377,7 @@ class App(AppBase):
         # Clear the screen first
         self.context["drawing"]["clear_screen"]()
         
-        font = self.context["fonts"]["bold"]
+        font = self.context["fonts"]["small"]
         small_font = self.context["fonts"]["default"]
         
         y = 2

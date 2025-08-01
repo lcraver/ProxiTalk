@@ -218,7 +218,6 @@ def __init__(self, context):
     # Fonts
     self.font_small = context["fonts"]["small"]
     self.font_large = context["fonts"]["large"]
-    self.font_bold = context["fonts"]["large_bold"]
     
     # Audio
     self.play_sfx = context["audio"]["play_sfx"]

@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw
 class App(AppBase):
     def __init__(self, context):
         super().__init__(context)
-        self.display_queue = context["display_queue"]
+        self.drawing = context["drawing"]
         self.width = context["screen_width"]
         self.height = context["screen_height"]
         self.context = context
@@ -25,7 +25,6 @@ class App(AppBase):
         # Display settings
         self.font_small = context["fonts"]["small"]
         self.font_default = context["fonts"]["default"]
-        self.font_bold = context["fonts"]["bold"]
         
         # Calendar layout
         self.header_height = 8
@@ -78,8 +77,11 @@ class App(AppBase):
     
     def draw_calendar(self):
         """Draw the complete calendar view"""
+        # Use batching for better performance when drawing multiple elements
+        self.drawing["begin_batch"]()
+        
         # Clear the screen
-        self.display_queue.put(("clear_base",))
+        self.drawing["clear_screen"]()
         
         # Draw month/year header
         self.draw_header()
@@ -90,6 +92,9 @@ class App(AppBase):
         # Draw calendar grid
         self.draw_calendar_grid()
         
+        # Execute all drawing operations at once
+        self.drawing["end_batch"]()
+        
     def draw_header(self):
         """Draw the month/year header"""
         month_name = self.month_names[self.view_month - 1]
@@ -99,7 +104,7 @@ class App(AppBase):
         font_width, font_height = self.context["get_text_size"](header_text, self.font_small)
         header_x = (self.width - font_width) // 2
         
-        self.display_queue.put(("draw_base_text", self.font_small, header_text, header_x, 2))
+        self.drawing["draw_text"](header_text, header_x, 2, self.font_small)
         
     def draw_day_names(self):
         """Draw the day names row"""
@@ -107,7 +112,7 @@ class App(AppBase):
         
         for i, day_name in enumerate(self.day_names):
             x_pos = self.start_x + (i * self.cell_width)
-            self.display_queue.put(("draw_base_text", self.font_small, day_name, x_pos, y_pos))
+            self.drawing["draw_text"](day_name, x_pos, y_pos, self.font_small)
             
     def draw_calendar_grid(self):
         """Draw the calendar grid with dates"""
@@ -152,7 +157,7 @@ class App(AppBase):
                 
                 # Draw the day number
                 day_str = str(day)
-                self.display_queue.put(("draw_base_text", font_to_use, day_str, x_pos, y_pos))
+                self.drawing["draw_text"](day_str, x_pos, y_pos, font_to_use)
                 
                 # Draw event indicator if there are events
                 if has_events:
@@ -197,7 +202,7 @@ class App(AppBase):
                 draw.line([outline_width - 1, i, outline_width - 1, end_y], fill=1)
         
         # Draw the outline image to the display
-        self.display_queue.put(("draw_base_image", outline_img, int(x), int(y)))
+        self.drawing["draw_image"](outline_img, int(x), int(y))
         
     def draw_cell_outline(self, x, y, width, height):
         """Draw an outline around a cell"""
@@ -212,7 +217,7 @@ class App(AppBase):
         draw.rectangle([0, 0, outline_width-1, outline_height-1], outline=1, fill=0)
         
         # Draw the outline image to the display
-        self.display_queue.put(("draw_base_image", outline_img, int(x), int(y)))
+        self.drawing["draw_image"](outline_img, int(x), int(y))
         
     def draw_event_indicator(self, x, y):
         """Draw a small dot to indicate events on a date"""
@@ -224,7 +229,7 @@ class App(AppBase):
         draw.ellipse([0, 0, 2, 2], fill=1)
         
         # Draw the indicator to the display
-        self.display_queue.put(("draw_base_image", indicator_img, int(x), int(y)))
+        self.drawing["draw_image"](indicator_img, int(x), int(y))
         
     def navigate_month(self, direction):
         """Navigate to previous (-1) or next (1) month"""

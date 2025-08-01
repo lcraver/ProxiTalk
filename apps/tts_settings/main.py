@@ -109,11 +109,11 @@ class App(AppBase):
         
         # Title
         title = "TTS Settings"
-        self.context["drawing"]["draw_text"](title, 1, 1, self.context["fonts"]["small"])
+        self.context["drawing"]["draw_text_inverted"](title, 2, 2, self.context["fonts"]["small"])
         
         # Current engine info
         engine_text = f"Engine: {self.current_engine.title()}"
-        self.context["drawing"]["draw_text"](engine_text, 1, 6, self.context["fonts"]["small"])
+        self.context["drawing"]["draw_text"](engine_text, 1, 8, self.context["fonts"]["small"])
         
         # VoiceVox speaker info if applicable
         if self.current_engine == "voicevox":
@@ -124,12 +124,12 @@ class App(AppBase):
                     if speaker['id'] == self.voicevox_speaker_id:
                         speaker_text = f"Voice: {speaker['voice']}"
                         style_text = f"Style: {speaker['style']}"
-                        self.context["drawing"]["draw_text"](speaker_text, 2, 26, self.context["fonts"]["small"])
-                        self.context["drawing"]["draw_text"](style_text, 2, 34, self.context["fonts"]["small"])
+                        self.context["drawing"]["draw_text"](speaker_text, 1, 13, self.context["fonts"]["default"])
+                        self.context["drawing"]["draw_text"](style_text, 1, 34, self.context["fonts"]["default"])
                         break
             else:
-                self.context["drawing"]["draw_text"](speaker_text, 2, 26, self.context["fonts"]["small"])
-        
+                self.context["drawing"]["draw_text"](speaker_text, 1, 26, self.context["fonts"]["default"])
+
         # Menu items
         start_y = 42 if self.current_engine == "voicevox" and self.voicevox_speakers else 38
         for i, item in enumerate(self.menu_items):
@@ -145,7 +145,7 @@ class App(AppBase):
         if self.submenu_type == "engine":
             # Engine selection submenu
             title = "Select Engine"
-            self.context["drawing"]["draw_text"](title, 2, 2, self.context["fonts"]["bold"])
+            self.context["drawing"]["draw_text"](title, 2, 2, self.context["fonts"]["small"])
             
             start_y = 18
             for i, engine in enumerate(self.available_engines):
@@ -192,7 +192,7 @@ class App(AppBase):
             # Style selection submenu for current voice
             if self.current_voice:
                 title = f"{self.current_voice['name']} Styles"
-                self.context["drawing"]["draw_text"](title, 2, 2, self.context["fonts"]["bold"])
+                self.context["drawing"]["draw_text"](title, 2, 2, self.context["fonts"]["small"])
                 
                 start_y = 18
                 styles = self.current_voice['styles']

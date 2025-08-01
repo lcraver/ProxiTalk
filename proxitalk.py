@@ -25,10 +25,10 @@ I2C_ADDRESS = 0x3C  # Common I2C address for SSD1306 displays
 
 if IS_WINDOWS:
     from config.emulator.paths import PIPER_BIN, MODEL_PATH, VOICEVOX_BIN, VOICEVOX_HOST, VOICEVOX_PORT, CACHE_DIR, CONFIG_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH
-    from config.emulator.paths import FONT_PATH, FONT_SMALL_PATH, FONT_BOLD_PATH, OVERLAY_DIR
+    from config.emulator.paths import FONT_PATH, FONT_SMALL_PATH, OVERLAY_DIR
 else:
     from config.paths import PIPER_BIN, MODEL_PATH, VOICEVOX_BIN, VOICEVOX_HOST, VOICEVOX_PORT, CACHE_DIR, CONFIG_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH
-    from config.paths import FONT_PATH, FONT_SMALL_PATH, FONT_BOLD_PATH, OVERLAY_DIR
+    from config.paths import FONT_PATH, FONT_SMALL_PATH, OVERLAY_DIR
     
 # -- Emulator Setup --- #
 
@@ -73,7 +73,7 @@ if IS_WINDOWS:
             # Debug overlay for region updates
             self._debug_regions = []
             self._debug_overlay_duration = 1/20 * 5  # Show overlay for 5 frames at 20 FPS
-            self._show_debug_overlay = False  # Toggle this to enable/disable debug overlay
+            self._show_debug_overlay = True  # Toggle this to enable/disable debug overlay
             
             # Window focus tracking
             self._window_focused = True
@@ -1447,7 +1447,6 @@ x = 0
 def load_fonts():
     required_fonts = [
         (FONT_PATH, "Font file"),
-        (FONT_BOLD_PATH, "Bold font file"), 
         (FONT_SMALL_PATH, "Small font file")
     ]
     
@@ -1457,15 +1456,9 @@ def load_fonts():
 
 load_fonts()
 
-bodyFontSize = 12
-
-font = ImageFont.truetype(FONT_PATH, bodyFontSize)
-fontBold = ImageFont.truetype(FONT_BOLD_PATH, bodyFontSize)
-
-fontLargeSize = 24
-fontLarge = ImageFont.truetype(FONT_PATH, fontLargeSize)
-fontLargeBold = ImageFont.truetype(FONT_BOLD_PATH, fontLargeSize)
 fontSmall = ImageFont.truetype(FONT_SMALL_PATH, 4)
+font = ImageFont.truetype(FONT_PATH, 11)
+fontLarge = ImageFont.truetype(FONT_PATH, 24)
 
 # --- Render composite display --- #
 # Track if display needs updating to avoid unnecessary redraws
@@ -1771,7 +1764,7 @@ def display_draw_text_inverted_immediate(layer_draw, layer_image, font, text, x=
         layer_draw.rectangle([bg_x, bg_y, bg_x + bg_width, bg_y + bg_height], fill=255)
         
         # Draw black text on top
-        layer_draw.text((x, y), text, font=font, fill=0)
+        layer_draw.text((x, y-1), text, font=font, fill=0)
         
         # Mark the region as dirty for update
         add_dirty_region(bg_x, bg_y, bg_width, bg_height)
@@ -2264,7 +2257,7 @@ else:
         return None
 
 # Utility function for getting text dimensions using modern getbbox method
-def get_text_size(text, font):
+def get_text_size(text, _font):
     """
     Get text width and height using the modern getbbox method.
     Returns (width, height) tuple for compatibility with the old textsize method.
@@ -2277,7 +2270,7 @@ def get_text_size(text, font):
     # Create a temporary image to get text bbox
     temp_img = Image.new("1", (1, 1))
     temp_draw = ImageDraw.Draw(temp_img)
-    bbox = temp_draw.textbbox((0, 0), text, font=font)
+    bbox = temp_draw.textbbox((0, 0), text, font=_font)
     
     # bbox returns (left, top, right, bottom)
     # For consistent behavior, we want the actual rendered size
@@ -2288,9 +2281,12 @@ def get_text_size(text, font):
     width = max(0, width)
     height = max(0, height)
     
-    if font == fontSmall:
+    if _font == fontSmall:
         # For small font, we want to ensure it fits within the expected line height
         height = max(height, 4)
+        width -= 1
+    elif _font == font:
+        height = max(height, 9)
         width -= 1
     
     return width, height
@@ -2300,10 +2296,8 @@ def get_text_baseline_offset(font):
         return 1
     elif font == fontLarge:
         return 5
-    elif font == fontLargeBold:
-        return 5
     elif font == font:
-        return 3
+        return 0
     else:
         return 0
 
@@ -2358,7 +2352,6 @@ def main():
         "display": disp,
         "screen_width": width,
         "screen_height": height,
-        "display_queue": display_queue,
         "pressed_keys": keys_pressed,
         "load_icon": load_icon,
         "audio": {
@@ -2390,9 +2383,7 @@ def main():
         "fonts": {
             "small": fontSmall,
             "default": font,
-            "bold": fontBold,
             "large": fontLarge,
-            "large_bold": fontLargeBold,
         },
         "apps": {
             "all": apps,

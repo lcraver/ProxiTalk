@@ -252,7 +252,7 @@ class App(AppBase):
         self.context["drawing"]["begin_batch"]()
         self.context["drawing"]["clear_screen"]()
         
-        font = self.context["fonts"]["bold"]
+        font = self.context["fonts"]["small"]
         small_font = self.context["fonts"]["default"]
         
         y = 2
