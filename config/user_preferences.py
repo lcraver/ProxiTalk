@@ -35,6 +35,7 @@ class UserPreferences:
             "disabled_overlays": [],
             "tts_engine": "piper",  # Default TTS engine: "piper" or "voicevox"
             "voicevox_speaker_id": 2,  # Default VoiceVox speaker ID
+            "piper_model": None,  # Default Piper model path
         }
     
     def _save_preferences(self) -> bool:
@@ -197,6 +198,15 @@ class UserPreferences:
     def set_voicevox_speaker_id(self, speaker_id: int) -> bool:
         """Set the VoiceVox speaker ID"""
         self._preferences["voicevox_speaker_id"] = speaker_id
+        return self._save_preferences()
+    
+    def get_piper_model(self) -> Optional[str]:
+        """Get the Piper model path"""
+        return self._preferences.get("piper_model")
+    
+    def set_piper_model(self, model_path: str) -> bool:
+        """Set the Piper model path"""
+        self._preferences["piper_model"] = model_path
         return self._save_preferences()
 
 # Global instance - will be initialized by main app

@@ -777,6 +777,15 @@ if IS_WINDOWS:
             # Optional: log stderr in background
             threading.Thread(target=self._log_stderr, daemon=True).start()
 
+        def update_model_path(self, new_model_path):
+            """Update the model path and restart the process if needed"""
+            self.model_path = new_model_path
+            print(f"[Piper] Model path updated to: {os.path.basename(new_model_path)}")
+            # Restart process with new model
+            if self.process:
+                self.close()
+            self.start_process()
+
         def _log_stderr(self):
             for line in iter(self.process.stderr.readline, b''):
                 print("Piper stderr:", line.decode(errors="ignore").strip(), flush=True)
@@ -839,6 +848,15 @@ else:
                 bufsize=0
             )
             threading.Thread(target=self._drain_stderr, daemon=True).start()
+
+        def update_model_path(self, new_model_path):
+            """Update the model path and restart the process if needed"""
+            self.model_path = new_model_path
+            print(f"[Piper] Model path updated to: {os.path.basename(new_model_path)}")
+            # Restart process with new model
+            if self.process:
+                self.close()
+            self.start_process()
 
         def synthesize(self, text):
             with self.lock:
@@ -909,6 +927,8 @@ if IS_WINDOWS:
                 print(f"[VoiceVox] Starting VoiceVox engine: {self.voicevox_bin}")
                 self.process = subprocess.Popen(
                     [self.voicevox_bin],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                     creationflags=subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
                 )
                 # Wait a moment for the server to start
@@ -1048,7 +1068,11 @@ else:
             """Start VoiceVox engine process"""
             try:
                 print(f"[VoiceVox] Starting VoiceVox engine: {self.voicevox_bin}")
-                self.process = subprocess.Popen([self.voicevox_bin])
+                self.process = subprocess.Popen(
+                    [self.voicevox_bin],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
                 # Wait a moment for the server to start
                 time.sleep(3)
                 self.is_running = self._check_server_status()
@@ -1183,53 +1207,76 @@ class TTSEngineManager:
         self.voicevox_host = voicevox_host
         self.voicevox_port = voicevox_port
         
+        # Piper model management
+        self.piper_dir = os.path.dirname(model_path) if model_path else ""
+        self.available_piper_models = []
+        self.current_piper_model = model_path
+        
         # VoiceVox speaker caching
         self._voicevox_speakers_cache = None
         self._voicevox_speakers_flat_cache = None
         self._cache_timestamp = None
         self._cache_duration = 300  # Cache for 5 minutes
         
+        # Discover available Piper models
+        self._discover_piper_models()
+        
         # Initialize Piper by default
         self._init_piper()
         
-        # Preload VoiceVox speakers in background
-        self._preload_voicevox_speakers()
+        # Note: VoiceVox initialization is now deferred until actually needed
     
-    def _preload_voicevox_speakers(self):
-        """Preload VoiceVox speakers in a background thread"""
-        def preload_thread():
-            try:
-                print("[TTS] Starting VoiceVox speaker preloading...")
-                # Give VoiceVox a moment to start if it's initializing
-                time.sleep(1)
-                
-                # Initialize VoiceVox if needed
-                if not self.voicevox_instance:
-                    print("[TTS] Initializing VoiceVox for preloading...")
-                    self._init_voicevox()
-                
-                # Load speakers into cache
-                if self.voicevox_instance:
-                    print("[TTS] Fetching speakers from VoiceVox API...")
-                    speakers = self.voicevox_instance.get_speakers()
-                    if speakers:
-                        self._update_speaker_cache(speakers)
-                        print(f"[TTS] Successfully preloaded {len(speakers)} VoiceVox voices")
-                        
-                        # Log some details about what was cached
-                        total_styles = sum(len(voice['styles']) for voice in speakers)
-                        print(f"[TTS] Cached {total_styles} total styles across all voices")
-                    else:
-                        print("[TTS] No VoiceVox speakers available for preloading (empty response)")
-                else:
-                    print("[TTS] VoiceVox instance not available for preloading")
-            except Exception as e:
-                print(f"[TTS] Error during VoiceVox speaker preloading: {e}")
-                import traceback
-                traceback.print_exc()
+    def _discover_piper_models(self):
+        """Discover available Piper .onnx model files"""
+        self.available_piper_models = []
         
-        # Start preloading in background thread
-        threading.Thread(target=preload_thread, daemon=True).start()
+        if not self.piper_dir or not os.path.exists(self.piper_dir):
+            print(f"[TTS] Piper directory not found: {self.piper_dir}")
+            return
+        
+        try:
+            # Find all .onnx files in the piper directory
+            for file in os.listdir(self.piper_dir):
+                if file.endswith('.onnx'):
+                    full_path = os.path.join(self.piper_dir, file)
+                    # Create model info
+                    model_info = {
+                        'path': full_path,
+                        'filename': file,
+                        'name': file.replace('.onnx', ''),  # Remove extension for display
+                        'exists': os.path.isfile(full_path)
+                    }
+                    self.available_piper_models.append(model_info)
+            
+            # Sort by name for consistent ordering
+            self.available_piper_models.sort(key=lambda x: x['name'])
+            
+            print(f"[TTS] Discovered {len(self.available_piper_models)} Piper models:")
+            for model in self.available_piper_models:
+                print(f"  - {model['name']} ({'OK' if model['exists'] else 'MISSING'})")
+            
+            # Set current model from user preferences or use first available
+            from config.user_preferences import user_preferences
+            if user_preferences:
+                preferred_model = user_preferences.get_piper_model()
+                if preferred_model:
+                    for model in self.available_piper_models:
+                        if model['path'] == preferred_model or model['filename'] == preferred_model:
+                            self.current_piper_model = model['path']
+                            print(f"[TTS] Using preferred Piper model: {model['name']}")
+                            return
+            
+            # Fallback to first available model or original model_path
+            if self.available_piper_models:
+                self.current_piper_model = self.available_piper_models[0]['path']
+                print(f"[TTS] Using first available Piper model: {self.available_piper_models[0]['name']}")
+            else:
+                self.current_piper_model = self.model_path
+                print(f"[TTS] No models discovered, using configured model: {self.model_path}")
+                
+        except Exception as e:
+            print(f"[TTS] Error discovering Piper models: {e}")
+            self.current_piper_model = self.model_path
     
     def _update_speaker_cache(self, speakers):
         """Update the speaker cache with new data"""
@@ -1270,12 +1317,35 @@ class TTSEngineManager:
     def _init_piper(self):
         """Initialize Piper TTS engine"""
         try:
+            # Always prioritize current_piper_model over the fallback model_path
+            # This ensures we use the actively selected model, not the static configuration
+            model_to_use = self.current_piper_model
+            if not model_to_use:
+                # Only fall back to model_path if no current model is set
+                model_to_use = self.model_path
+                print(f"[TTS] No current model set, falling back to configured model")
+            
+            print(f"[TTS] Initializing Piper engine with model: {os.path.basename(model_to_use) if model_to_use else 'None'}")
+            print(f"[TTS] Full model path: {model_to_use}")
+            
+            # Verify model file exists before trying to use it
+            if not model_to_use or not os.path.exists(model_to_use):
+                raise FileNotFoundError(f"Piper model file not found: {model_to_use}")
+            
+            # If we already have a Piper instance, just update its model path
             if self.piper_instance:
-                self.piper_instance.close()
-            self.piper_instance = PersistentPiper(self.piper_bin, self.model_path)
-            print("[TTS] Piper engine initialized")
+                print("[TTS] Updating existing Piper instance with new model...")
+                self.piper_instance.update_model_path(model_to_use)
+            else:
+                print("[TTS] Creating new Piper instance...")
+                self.piper_instance = PersistentPiper(self.piper_bin, model_to_use)
+            
+            print(f"[TTS] Piper engine successfully initialized with model: {os.path.basename(model_to_use)}")
         except Exception as e:
             print(f"[TTS] Failed to initialize Piper: {e}")
+            import traceback
+            traceback.print_exc()
+            self.piper_instance = None
     
     def _init_voicevox(self):
         """Initialize VoiceVox TTS engine"""
@@ -1307,11 +1377,28 @@ class TTSEngineManager:
             return True
         
         print(f"[TTS] Switching from {self.current_engine} to {engine_name}")
+        
+        # Close the current engine before switching to ensure only one runs at a time
+        if self.current_engine == "piper" and self.piper_instance:
+            print("[TTS] Closing Piper instance before switching")
+            self.piper_instance.close()
+            self.piper_instance = None
+        elif self.current_engine == "voicevox" and self.voicevox_instance:
+            print("[TTS] Closing VoiceVox instance before switching")
+            self.voicevox_instance.close()
+            self.voicevox_instance = None
+        
+        # Update current engine
         self.current_engine = engine_name
         
-        if engine_name == "voicevox" and not self.voicevox_instance:
+        # Initialize the new engine
+        if engine_name == "voicevox":
+            print("[TTS] Initializing VoiceVox engine")
             self._init_voicevox()
-        elif engine_name == "piper" and not self.piper_instance:
+        elif engine_name == "piper":
+            print("[TTS] Initializing Piper engine with current model")
+            # Always initialize/reinitialize Piper to ensure it uses the current selected model
+            # This handles cases where the model was changed while using a different engine
             self._init_piper()
         
         return True
@@ -1340,8 +1427,101 @@ class TTSEngineManager:
         else:
             print("[TTS] VoiceVox not initialized")
     
+    def get_piper_models(self):
+        """Get available Piper models"""
+        return self.available_piper_models
+    
+    def set_piper_model(self, model_path):
+        """Set the current Piper model"""
+        # Find the model in available models
+        model_found = False
+        for model in self.available_piper_models:
+            if model['path'] == model_path or model['filename'] == os.path.basename(model_path):
+                if model['exists']:
+                    old_model = self.current_piper_model
+                    self.current_piper_model = model['path']
+                    model_found = True
+                    print(f"[TTS] Piper model changing from {os.path.basename(old_model) if old_model else 'None'} to: {model['name']}")
+                    
+                    # Always reinitialize Piper with new model to ensure the running instance is updated
+                    # This ensures the new model is loaded immediately if Piper is active,
+                    # or will be used when Piper is next activated
+                    try:
+                        # Force close existing instance if present
+                        if self.piper_instance:
+                            print("[TTS] Closing existing Piper instance...")
+                            self.piper_instance.close()
+                            self.piper_instance = None
+                            # Small delay to ensure process cleanup
+                            import time
+                            time.sleep(0.1)
+                        
+                        # If Piper is the current engine, reinitialize immediately
+                        if self.current_engine == "piper":
+                            print(f"[TTS] Reinitializing Piper with new model: {model['name']}")
+                            self._init_piper()
+                            print(f"[TTS] Active Piper instance updated with new model")
+                        else:
+                            print(f"[TTS] Piper model will be used when Piper engine is next activated")
+                    except Exception as e:
+                        print(f"[TTS] Error reinitializing Piper with new model: {e}")
+                        import traceback
+                        traceback.print_exc()
+                    
+                    # Save to user preferences
+                    from config.user_preferences import user_preferences
+                    if user_preferences:
+                        user_preferences.set_piper_model(model['path'])
+                    
+                    return True
+                else:
+                    print(f"[TTS] Model file not found: {model['path']}")
+                    return False
+        
+        if not model_found:
+            print(f"[TTS] Model not found in available models: {model_path}")
+            return False
+    
+    def get_current_piper_model(self):
+        """Get the current Piper model path - always returns the active model"""
+        return self.current_piper_model
+    
+    def get_current_piper_model_info(self):
+        """Get detailed info about the current Piper model"""
+        current_path = self.current_piper_model
+        if not current_path:
+            return None
+            
+        # Find the model info in available models
+        for model in self.available_piper_models:
+            if model['path'] == current_path:
+                return model
+        
+        # If not found in available models, create basic info
+        return {
+            'path': current_path,
+            'filename': os.path.basename(current_path),
+            'name': os.path.basename(current_path).replace('.onnx', ''),
+            'exists': os.path.exists(current_path)
+        }
+    
+    def get_active_model_filename(self):
+        """Get just the filename of the active model for use in cache keys, etc."""
+        if self.current_piper_model:
+            return os.path.basename(self.current_piper_model)
+        elif self.model_path:
+            return os.path.basename(self.model_path)
+        else:
+            return "unknown_model"
+    
     def get_voicevox_speakers(self):
-        """Get available VoiceVox speakers (cached)"""
+        """Get available VoiceVox speakers (cached) - only if VoiceVox is current engine"""
+        # Only provide speaker lists if VoiceVox is the current engine
+        # This prevents unnecessary VoiceVox initialization just for browsing speakers
+        if self.current_engine != "voicevox":
+            print("[TTS] VoiceVox speakers requested but VoiceVox is not the current engine")
+            return []
+        
         # Try to use cache first
         if self._is_cache_valid() and self._voicevox_speakers_cache:
             return self._voicevox_speakers_cache
@@ -1350,8 +1530,9 @@ class TTSEngineManager:
         if self._refresh_speaker_cache():
             return self._voicevox_speakers_cache
         
-        # Fallback to direct API call if cache refresh fails
+        # Initialize VoiceVox if it's the current engine but not yet initialized
         if not self.voicevox_instance:
+            print("[TTS] Initializing VoiceVox to get speakers (current engine)")
             self._init_voicevox()
         
         if self.voicevox_instance:
@@ -1363,7 +1544,11 @@ class TTSEngineManager:
         return []
     
     def get_voicevox_speakers_flat(self):
-        """Get VoiceVox speakers as a flat list for UI compatibility (cached)"""
+        """Get VoiceVox speakers as a flat list for UI compatibility (cached) - only if VoiceVox is current engine"""
+        # Only provide speaker lists if VoiceVox is the current engine
+        if self.current_engine != "voicevox":
+            return []
+            
         # Try to use cache first
         if self._is_cache_valid() and self._voicevox_speakers_flat_cache:
             return self._voicevox_speakers_flat_cache
@@ -1389,7 +1574,12 @@ class TTSEngineManager:
         return flat_list
     
     def refresh_voicevox_speakers_cache(self):
-        """Force refresh the VoiceVox speakers cache"""
+        """Force refresh the VoiceVox speakers cache - only if VoiceVox is current engine"""
+        # Only refresh if VoiceVox is the current engine
+        if self.current_engine != "voicevox":
+            print("[TTS] VoiceVox speaker cache refresh requested but VoiceVox is not the current engine")
+            return False
+            
         print("[TTS] Force refreshing VoiceVox speakers cache...")
         self._cache_timestamp = None  # Invalidate cache
         if not self.voicevox_instance:
@@ -1757,16 +1947,17 @@ def display_draw_text_inverted_immediate(layer_draw, layer_image, _font, text, x
         # Calculate background rectangle dimensions with padding
         bg_width = text_width + (padding * 2)
         bg_height = text_height + (padding * 2)
+        bg_height -= 1  # Adjust background y for small font
         bg_x = x - padding
         bg_y = y - padding
-        
-        # Draw white background rectangle
-
-        layer_draw.rectangle([bg_x, bg_y, bg_x + bg_width, bg_y + bg_height], fill=255)
         
         if _font == fontSmall:
             # Adjust y position for small font
             y -= 1
+        
+        # Draw white background rectangle
+
+        layer_draw.rectangle([bg_x, bg_y, bg_x + bg_width, bg_y + bg_height], fill=255)
         
         # Draw black text on top
         layer_draw.text((x, y), text, font=_font, fill=0)
@@ -2020,6 +2211,10 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 
 from config.wordmap import word_map
 
+# Initialize user preferences first so TTS manager can access preferred models
+from config.user_preferences import initialize_preferences
+initialize_preferences(CONFIG_DIR)
+
 # Initialize TTS Engine Manager
 tts_manager = TTSEngineManager(PIPER_BIN, MODEL_PATH, VOICEVOX_BIN, VOICEVOX_HOST, VOICEVOX_PORT)
 atexit.register(lambda: tts_manager.close_all())
@@ -2105,8 +2300,9 @@ def run_tts(text, background=False):
         speaker_id = user_preferences.get_voicevox_speaker_id() if user_preferences else 2
         engine_suffix += f"_speaker_{speaker_id}"
     elif tts_manager.get_current_engine() == "piper":
-        # Include Piper model path to handle different models
-        model_filename = os.path.basename(MODEL_PATH) if MODEL_PATH else "unknown"
+        # Include current active Piper model filename to handle different models
+        # Use the reliable method that always returns the active model filename
+        model_filename = tts_manager.get_active_model_filename()
         engine_suffix += f"_model_{model_filename}"
     
     cache_key = hash_text(text + engine_suffix)
@@ -2432,6 +2628,10 @@ def main():
             "get_voicevox_speakers": lambda: tts_manager.get_voicevox_speakers(),
             "get_voicevox_speakers_flat": lambda: tts_manager.get_voicevox_speakers_flat(),
             "refresh_voicevox_speakers": lambda: tts_manager.refresh_voicevox_speakers_cache(),
+            # Piper model methods
+            "get_piper_models": lambda: tts_manager.get_piper_models(),
+            "set_piper_model": lambda model_path: tts_manager.set_piper_model(model_path),
+            "get_current_piper_model": lambda: tts_manager.get_current_piper_model(),
         },
         "fonts": {
             "small": fontSmall,
@@ -2485,13 +2685,12 @@ def main():
         "AUTOCOMPLETE_PATH": AUTOCOMPLETE_PATH,
     }
     
-    # Initialize user preferences
-    from config.user_preferences import initialize_preferences
-    user_prefs = initialize_preferences(CONFIG_DIR)
-    context["user_preferences"] = user_prefs
+    # Get the already initialized user preferences
+    from config.user_preferences import user_preferences
+    context["user_preferences"] = user_preferences
     
     # Set TTS engine based on user preferences
-    preferred_engine = user_prefs.get_tts_engine()
+    preferred_engine = user_preferences.get_tts_engine()
     if tts_manager.set_engine(preferred_engine):
         print(f"[Main] TTS engine set to: {preferred_engine}")
     else:
@@ -2508,7 +2707,7 @@ def main():
     # Start all loaded overlays (unless disabled by user)
     for overlay_name in app_manager.overlay_apps:
         # Check if overlay is disabled in user preferences
-        if user_prefs.is_overlay_disabled(overlay_name):
+        if user_preferences.is_overlay_disabled(overlay_name):
             print(f"[Main] Skipping disabled overlay: {overlay_name}")
             continue
             

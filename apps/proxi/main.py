@@ -10,7 +10,6 @@ from config.keymap import key_map, shift_key_map
 class App(AppBase):
     def __init__(self, context):
         super().__init__(context)
-        self.display_queue = context["display_queue"]
         self.draw = context["drawing"]  # New region-based drawing system
         self.context = context
         self.words = self.load_autocomplete_words(context["AUTOCOMPLETE_PATH"])

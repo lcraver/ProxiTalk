@@ -55,9 +55,16 @@ class App(AppBase):
                     self.find_voice_and_style_for_speaker(speaker)
                     break
 
+        # Get Piper models on startup
+        self.piper_models = []
+        self.current_piper_model_index = 0
+        self.load_piper_models()
+
         self.menu_items = ["Engine", "Test"]
         if self.current_engine == "voicevox":
             self.menu_items.insert(1, "Voice")
+        elif self.current_engine == "piper":
+            self.menu_items.insert(1, "Model")
         self.selected_item = 0
         self.in_submenu = False
         self.submenu_type = None
@@ -114,16 +121,46 @@ class App(AppBase):
             self.voicevox_speakers = []
             self.voicevox_voices = []
 
+    def load_piper_models(self):
+        """Load available Piper models"""
+        try:
+            self.piper_models = self.context["tts"]["get_piper_models"]()
+            current_model = self.context["tts"]["get_current_piper_model"]()
+            
+            if self.piper_models:
+                print(f"[TTS Settings] Loaded {len(self.piper_models)} Piper models")
+                
+                # Find the current model index
+                self.current_piper_model_index = 0
+                for i, model in enumerate(self.piper_models):
+                    if model['path'] == current_model:
+                        self.current_piper_model_index = i
+                        break
+                        
+                # Debug: print available models
+                for i, model in enumerate(self.piper_models):
+                    status = " (current)" if model['path'] == current_model else ""
+                    exists = " (OK)" if model['exists'] else " (MISSING)"
+                    print(f"[TTS Settings] Model {i}: {model['name']}{status}{exists}")
+            else:
+                print("[TTS Settings] No Piper models available")
+        except Exception as e:
+            print(f"[TTS Settings] Failed to load Piper models: {e}")
+            self.piper_models = []
+
     def update_menu_items(self):
         """Update menu items based on current engine"""
         self.menu_items = ["Engine", "Test"]
         if self.current_engine == "voicevox":
             self.menu_items.insert(1, "Voice")
+        elif self.current_engine == "piper":
+            self.menu_items.insert(1, "Model")
         if self.selected_item >= len(self.menu_items):
             self.selected_item = len(self.menu_items) - 1
 
     def draw_screen(self):
         """Draw the main settings screen"""
+        self.context["drawing"]["begin_batch"]()
         self.context["drawing"]["clear_screen"]()
 
         # Title
@@ -156,17 +193,31 @@ class App(AppBase):
                 self.context["drawing"]["draw_text"](
                     speaker_text, 1, 26, self.context["fonts"]["default"])
 
+        # Piper model info if applicable
+        elif self.current_engine == "piper":
+            current_model = self.context["tts"]["get_current_piper_model"]()
+            if current_model:
+                model_name = os.path.basename(current_model).replace('.onnx', '')
+                model_width, _ = self.context["drawing"]["draw_text_inverted"](
+                    "Model", 2, height + 4, self.context["fonts"]["small"])
+                self.context["drawing"]["draw_text"](
+                    model_name, width + 3, height + 3, self.context["fonts"]["default"])
+
         # Menu items
-        start_y = 42 if self.current_engine == "voicevox" and self.voicevox_speakers else 38
+        has_info = (self.current_engine == "voicevox" and self.voicevox_speakers) or (self.current_engine == "piper")
+        start_y = 42 if has_info else 38
         for i, item in enumerate(self.menu_items):
             y = start_y + i * 8
             prefix = "> " if i == self.selected_item else "  "
             text = f"{prefix}{item}"
             self.context["drawing"]["draw_text"](
                 text, 2, y, self.context["fonts"]["small"])
+        
+        self.context["drawing"]["end_batch"]()
 
     def draw_submenu(self):
         """Draw submenu screens"""
+        self.context["drawing"]["begin_batch"]()
         self.context["drawing"]["clear_screen"]()
 
         if self.submenu_type == "engine":
@@ -495,6 +546,47 @@ class App(AppBase):
                 self.context["drawing"]["draw_text"](
                     "No voice selected", 2, 18, self.context["fonts"]["small"])
 
+        elif self.submenu_type == "model":
+            # Piper model selection submenu
+            title = "Select Model"
+            self.context["drawing"]["draw_text"](
+                title, 2, 2, self.context["fonts"]["small"])
+
+            if self.piper_models:
+                start_y = 18
+                for i, model in enumerate(self.piper_models):
+                    y = start_y + i * 8
+                    prefix = "> " if i == self.current_piper_model_index else "  "
+                    
+                    # Show status indicators
+                    status = ""
+                    current_model = self.context["tts"]["get_current_piper_model"]()
+                    if model['path'] == current_model:
+                        status += " *"
+                    if not model['exists']:
+                        status += " (MISSING)"
+                    
+                    text = f"{prefix}{model['name']}{status}"
+
+                    # Invert text if this is the currently selected model
+                    if i == self.current_piper_model_index:
+                        self.context["drawing"]["draw_text_inverted"](
+                            text, 2, y, self.context["fonts"]["small"])
+                    else:
+                        self.context["drawing"]["draw_text"](
+                            text, 2, y, self.context["fonts"]["small"])
+                            
+                # Instructions
+                self.context["drawing"]["draw_text"](
+                    "Up/Down: Navigate", 2, 56, self.context["fonts"]["small"])
+                self.context["drawing"]["draw_text"](
+                    "Enter: Select", 2, 64, self.context["fonts"]["small"])
+            else:
+                self.context["drawing"]["draw_text"](
+                    "No models found", 2, 18, self.context["fonts"]["small"])
+        
+        self.context["drawing"]["end_batch"]()
+
     def render(self):
         """Render the current screen"""
         if self.in_submenu:
@@ -540,6 +632,13 @@ class App(AppBase):
                     self.current_voice = self.voicevox_voices[self.current_voice_index]
                 self.in_submenu = True
                 self.submenu_type = "voice"
+            elif selected_menu == "Model":
+                # Load Piper models if needed
+                if not self.piper_models:
+                    print("[TTS Settings] Loading Piper models...")
+                    self.load_piper_models()
+                self.in_submenu = True
+                self.submenu_type = "model"
             elif selected_menu == "Test":
                 self.test_tts()
         elif key == 'KEY_ESC':
@@ -604,6 +703,10 @@ class App(AppBase):
             if self.submenu_type == "engine":
                 self.engine_index = (self.engine_index -
                                      1) % len(self.available_engines)
+            elif self.submenu_type == "model":
+                if self.piper_models:
+                    self.current_piper_model_index = (
+                        self.current_piper_model_index - 1) % len(self.piper_models)
             elif self.submenu_type == "voice":
                 if self.active_panel == "voice" and self.voicevox_voices:
                     old_voice_index = self.current_voice_index
@@ -629,6 +732,10 @@ class App(AppBase):
             if self.submenu_type == "engine":
                 self.engine_index = (self.engine_index +
                                      1) % len(self.available_engines)
+            elif self.submenu_type == "model":
+                if self.piper_models:
+                    self.current_piper_model_index = (
+                        self.current_piper_model_index + 1) % len(self.piper_models)
             elif self.submenu_type == "voice":
                 if self.active_panel == "voice" and self.voicevox_voices:
                     old_voice_index = self.current_voice_index
@@ -670,6 +777,9 @@ class App(AppBase):
                                 self.current_voice_index = 0
                                 self.current_voice = self.voicevox_voices[0]
                                 self.current_style_index = 0
+                        elif new_engine == "piper":
+                            # Load Piper models
+                            self.load_piper_models()
 
                         # Update menu items
                         self.update_menu_items()
@@ -681,6 +791,29 @@ class App(AppBase):
                 self.in_submenu = False
                 self.submenu_type = None
                 self.active_panel = "voice"
+            elif self.submenu_type == "model":
+                # Apply selected Piper model
+                if self.piper_models and self.current_piper_model_index < len(self.piper_models):
+                    selected_model = self.piper_models[self.current_piper_model_index]
+                    if selected_model['exists']:
+                        if self.context["tts"]["set_piper_model"](selected_model['path']):
+                            print(f"[TTS Settings] Changed Piper model to: {selected_model['name']}")
+                            # Refresh the model list to update current model status
+                            self.load_piper_models()
+                            # Ensure preferences are explicitly saved (redundant but safe)
+                            try:
+                                self.context["user_preferences"].set_piper_model(selected_model['path'])
+                                print(f"[TTS Settings] Saved Piper model preference: {selected_model['name']}")
+                            except Exception as e:
+                                print(f"[TTS Settings] Warning: Failed to save model preference: {e}")
+                        else:
+                            print(f"[TTS Settings] Failed to change Piper model to: {selected_model['name']}")
+                    else:
+                        print(f"[TTS Settings] Model file not found: {selected_model['path']}")
+                
+                # Exit submenu
+                self.in_submenu = False
+                self.submenu_type = None
             elif self.submenu_type == "voice":
                 if self.active_panel == "style" and self.current_voice and self.current_voice['styles']:
                     # Apply the selected style when ENTER is pressed on style panel
@@ -695,6 +828,13 @@ class App(AppBase):
                         style_name = selected_style['name']
                         print(
                             f"[TTS Settings] Changed VoiceVox to {voice_name} ({style_name}) - ID: {new_speaker_id}")
+                        
+                        # Ensure preferences are explicitly saved (redundant but safe)
+                        try:
+                            self.context["user_preferences"].set_voicevox_speaker_id(new_speaker_id)
+                            print(f"[TTS Settings] Saved VoiceVox speaker preference: {voice_name} ({style_name})")
+                        except Exception as e:
+                            print(f"[TTS Settings] Warning: Failed to save speaker preference: {e}")
 
                     # Exit submenu completely
                     self.in_submenu = False
@@ -718,9 +858,18 @@ class App(AppBase):
                         style_name = selected_style['name']
                         print(
                             f"[TTS Settings] Changed VoiceVox to {voice_name} ({style_name}) - ID: {new_speaker_id}")
+                        
+                        # Ensure preferences are explicitly saved (redundant but safe)
+                        try:
+                            self.context["user_preferences"].set_voicevox_speaker_id(new_speaker_id)
+                            print(f"[TTS Settings] Saved VoiceVox speaker preference: {voice_name} ({style_name})")
+                        except Exception as e:
+                            print(f"[TTS Settings] Warning: Failed to save speaker preference: {e}")
 
                     # Exit submenu completely
                     self.in_submenu = False
+                    self.submenu_type = None
+                    self.active_panel = "voice"
                     self.submenu_type = None
                     self.active_panel = "voice"
 
