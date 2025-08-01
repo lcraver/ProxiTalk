@@ -70,7 +70,7 @@ class App(AppBase):
     def speak(self, text, background=True):
         """Speak text if TTS is enabled"""
         if self.tts_enabled:
-            self.context["run_tts"](text, background=background)
+            self.context["tts"]["run"](text, background=background)
     
     def update(self):
         """Update the editor display"""
@@ -932,7 +932,7 @@ class App(AppBase):
                 self.scroll_offset = 0
                 self.filename = filename
                 self.file_modified = False
-                # self.context["run_tts"](f"Opened {filename}", background=True)
+                # self.context["tts"]["run"](f"Opened {filename}", background=True)
             else:
                 # Create new file
                 self.lines = [""]
@@ -941,11 +941,11 @@ class App(AppBase):
                 self.scroll_offset = 0
                 self.filename = filename
                 self.file_modified = False
-                # self.context["run_tts"](f"Creating new file {filename}", background=True)
+                # self.context["tts"]["run"](f"Creating new file {filename}", background=True)
                 
         except Exception as e:
             print(f"Error opening file: {str(e)}")
-            # self.context["run_tts"](f"Error opening file: {str(e)}", background=True)
+            # self.context["tts"]["run"](f"Error opening file: {str(e)}", background=True)
     
     def open_file_direct(self, filepath):
         """Open a file directly using its full path"""
@@ -1010,9 +1010,9 @@ class App(AppBase):
         if self.find_results:
             self.current_find_index = 0
             self.jump_to_find_result(0)
-            # self.context["run_tts"](f"Found {len(self.find_results)} matches", background=True)
+            # self.context["tts"]["run"](f"Found {len(self.find_results)} matches", background=True)
         else:
-            # self.context["run_tts"]("No matches found", background=True)
+            # self.context["tts"]["run"]("No matches found", background=True)
             print("No matches found")
 
     def next_find_result(self):

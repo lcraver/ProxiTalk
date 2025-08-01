@@ -6,7 +6,7 @@ class App(AppBase):
     def __init__(self, context):
         super().__init__(context)
         self.play_sfx = context["audio"]["play_sfx"]
-        self.run_tts = context["run_tts"]
+        self.run_tts = context["tts"]["run"]
         self.path = context["app_path"]
         
         # Game constants

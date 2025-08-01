@@ -9,6 +9,10 @@ import select
 import atexit
 import re
 import platform
+import requests
+import json
+import io
+import wave
 from PIL import Image, ImageDraw, ImageFont
 
 # --- Constants --- #
@@ -20,10 +24,10 @@ I2C_PORT = 1        # I2C port (usually 1 on Raspberry Pi)
 I2C_ADDRESS = 0x3C  # Common I2C address for SSD1306 displays
 
 if IS_WINDOWS:
-    from config.emulator.paths import PIPER_BIN, MODEL_PATH, CACHE_DIR, CONFIG_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH
+    from config.emulator.paths import PIPER_BIN, MODEL_PATH, VOICEVOX_BIN, VOICEVOX_HOST, VOICEVOX_PORT, CACHE_DIR, CONFIG_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH
     from config.emulator.paths import FONT_PATH, FONT_SMALL_PATH, FONT_BOLD_PATH, OVERLAY_DIR
 else:
-    from config.paths import PIPER_BIN, MODEL_PATH, CACHE_DIR, CONFIG_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH
+    from config.paths import PIPER_BIN, MODEL_PATH, VOICEVOX_BIN, VOICEVOX_HOST, VOICEVOX_PORT, CACHE_DIR, CONFIG_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH
     from config.paths import FONT_PATH, FONT_SMALL_PATH, FONT_BOLD_PATH, OVERLAY_DIR
     
 # -- Emulator Setup --- #
@@ -884,6 +888,534 @@ else:
                 except Exception as e:
                     print("Error closing Piper:", e, flush=True)
 
+# --- VoiceVox TTS --- #
+
+if IS_WINDOWS:
+    class PersistentVoiceVox:
+        def __init__(self, voicevox_bin, host, port, speaker_id=2):
+            self.voicevox_bin = voicevox_bin
+            self.host = host
+            self.port = port
+            self.speaker_id = speaker_id
+            self.base_url = f"http://{host}:{port}"
+            self.process = None
+            self.lock = threading.Lock()
+            self.is_running = False
+            self.start_process()
+
+        def start_process(self):
+            """Start VoiceVox engine process"""
+            try:
+                print(f"[VoiceVox] Starting VoiceVox engine: {self.voicevox_bin}")
+                self.process = subprocess.Popen(
+                    [self.voicevox_bin],
+                    creationflags=subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
+                )
+                # Wait a moment for the server to start
+                time.sleep(3)
+                self.is_running = self._check_server_status()
+                if self.is_running:
+                    print(f"[VoiceVox] Engine started successfully at {self.base_url}")
+                else:
+                    print(f"[VoiceVox] Failed to start engine or server not responding")
+            except Exception as e:
+                print(f"[VoiceVox] Failed to start engine: {e}")
+                self.is_running = False
+
+        def _check_server_status(self):
+            """Check if VoiceVox server is responding"""
+            try:
+                response = requests.get(f"{self.base_url}/version", timeout=2)
+                return response.status_code == 200
+            except:
+                return False
+
+        def synthesize(self, text, timeout=10.0):
+            """Synthesize text to audio using VoiceVox API"""
+            with self.lock:
+                if not self.is_running or not self._check_server_status():
+                    print("[VoiceVox] Server not running. Restarting.", flush=True)
+                    self.start_process()
+                    if not self.is_running:
+                        return b''
+
+                try:
+                    # Step 1: Create audio query
+                    query_response = requests.post(
+                        f"{self.base_url}/audio_query",
+                        params={"text": text, "speaker": self.speaker_id},
+                        timeout=timeout
+                    )
+                    if query_response.status_code != 200:
+                        print(f"[VoiceVox] Audio query failed: {query_response.status_code}")
+                        return b''
+                    
+                    audio_query = query_response.json()
+                    
+                    # Step 2: Synthesize audio
+                    synthesis_response = requests.post(
+                        f"{self.base_url}/synthesis",
+                        headers={"Content-Type": "application/json"},
+                        params={"speaker": self.speaker_id},
+                        data=json.dumps(audio_query),
+                        timeout=timeout
+                    )
+                    
+                    if synthesis_response.status_code != 200:
+                        print(f"[VoiceVox] Synthesis failed: {synthesis_response.status_code}")
+                        return b''
+                    
+                    return synthesis_response.content
+                    
+                except requests.exceptions.RequestException as e:
+                    print(f"[VoiceVox] Request error: {e}")
+                    return b''
+                except Exception as e:
+                    print(f"[VoiceVox] Synthesis error: {e}")
+                    return b''
+
+        def set_speaker_id(self, speaker_id):
+            """Change the speaker ID"""
+            self.speaker_id = speaker_id
+            print(f"[VoiceVox] Speaker ID changed to: {speaker_id}")
+
+        def get_speakers(self):
+            """Get available speakers from VoiceVox API"""
+            try:
+                if not self.is_running or not self._check_server_status():
+                    print("[VoiceVox] Server not running, cannot get speakers")
+                    return []
+                
+                response = requests.get(f"{self.base_url}/speakers", timeout=5)
+                if response.status_code == 200:
+                    speakers_data = response.json()
+                    speakers = []
+                    for speaker in speakers_data:
+                        name = speaker.get('name', 'Unknown')
+                        speaker_uuid = speaker.get('speaker_uuid', '')
+                        version = speaker.get('version', '')
+                        
+                        # Create a voice entry for this speaker
+                        voice_info = {
+                            'name': name,
+                            'uuid': speaker_uuid,
+                            'version': version,
+                            'styles': []
+                        }
+                        
+                        # Add all styles for this voice
+                        for style in speaker.get('styles', []):
+                            style_info = {
+                                'id': style.get('id', 0),
+                                'name': style.get('name', 'Normal'),
+                                'type': style.get('type', 'talk')
+                            }
+                            voice_info['styles'].append(style_info)
+                        
+                        speakers.append(voice_info)
+                    
+                    return speakers
+                else:
+                    print(f"[VoiceVox] Failed to get speakers: {response.status_code}")
+                    return []
+            except Exception as e:
+                print(f"[VoiceVox] Error getting speakers: {e}")
+                return []
+
+        def close(self):
+            """Cleanup VoiceVox process"""
+            self.is_running = False
+            if self.process:
+                try:
+                    self.process.terminate()
+                    self.process.wait(timeout=3)
+                except Exception as e:
+                    print(f"[VoiceVox] Cleanup error: {e}")
+else:
+    class PersistentVoiceVox:
+        def __init__(self, voicevox_bin, host, port, speaker_id=2):
+            self.voicevox_bin = voicevox_bin
+            self.host = host
+            self.port = port
+            self.speaker_id = speaker_id
+            self.base_url = f"http://{host}:{port}"
+            self.process = None
+            self.lock = threading.Lock()
+            self.is_running = False
+            self.start_process()
+
+        def start_process(self):
+            """Start VoiceVox engine process"""
+            try:
+                print(f"[VoiceVox] Starting VoiceVox engine: {self.voicevox_bin}")
+                self.process = subprocess.Popen([self.voicevox_bin])
+                # Wait a moment for the server to start
+                time.sleep(3)
+                self.is_running = self._check_server_status()
+                if self.is_running:
+                    print(f"[VoiceVox] Engine started successfully at {self.base_url}")
+                else:
+                    print(f"[VoiceVox] Failed to start engine or server not responding")
+            except Exception as e:
+                print(f"[VoiceVox] Failed to start engine: {e}")
+                self.is_running = False
+
+        def _check_server_status(self):
+            """Check if VoiceVox server is responding"""
+            try:
+                response = requests.get(f"{self.base_url}/version", timeout=2)
+                return response.status_code == 200
+            except:
+                return False
+
+        def synthesize(self, text, timeout=10.0):
+            """Synthesize text to audio using VoiceVox API"""
+            with self.lock:
+                if not self.is_running or not self._check_server_status():
+                    print("[VoiceVox] Server not running. Restarting.", flush=True)
+                    self.start_process()
+                    if not self.is_running:
+                        return b''
+
+                try:
+                    # Step 1: Create audio query
+                    query_response = requests.post(
+                        f"{self.base_url}/audio_query",
+                        params={"text": text, "speaker": self.speaker_id},
+                        timeout=timeout
+                    )
+                    if query_response.status_code != 200:
+                        print(f"[VoiceVox] Audio query failed: {query_response.status_code}")
+                        return b''
+                    
+                    audio_query = query_response.json()
+                    
+                    # Step 2: Synthesize audio
+                    synthesis_response = requests.post(
+                        f"{self.base_url}/synthesis",
+                        headers={"Content-Type": "application/json"},
+                        params={"speaker": self.speaker_id},
+                        data=json.dumps(audio_query),
+                        timeout=timeout
+                    )
+                    
+                    if synthesis_response.status_code != 200:
+                        print(f"[VoiceVox] Synthesis failed: {synthesis_response.status_code}")
+                        return b''
+                    
+                    return synthesis_response.content
+                    
+                except requests.exceptions.RequestException as e:
+                    print(f"[VoiceVox] Request error: {e}")
+                    return b''
+                except Exception as e:
+                    print(f"[VoiceVox] Synthesis error: {e}")
+                    return b''
+
+        def set_speaker_id(self, speaker_id):
+            """Change the speaker ID"""
+            self.speaker_id = speaker_id
+            print(f"[VoiceVox] Speaker ID changed to: {speaker_id}")
+
+        def get_speakers(self):
+            """Get available speakers from VoiceVox API"""
+            try:
+                if not self.is_running or not self._check_server_status():
+                    print("[VoiceVox] Server not running, cannot get speakers")
+                    return []
+                
+                response = requests.get(f"{self.base_url}/speakers", timeout=5)
+                if response.status_code == 200:
+                    speakers_data = response.json()
+                    speakers = []
+                    for speaker in speakers_data:
+                        name = speaker.get('name', 'Unknown')
+                        speaker_uuid = speaker.get('speaker_uuid', '')
+                        version = speaker.get('version', '')
+                        
+                        # Create a voice entry for this speaker
+                        voice_info = {
+                            'name': name,
+                            'uuid': speaker_uuid,
+                            'version': version,
+                            'styles': []
+                        }
+                        
+                        # Add all styles for this voice
+                        for style in speaker.get('styles', []):
+                            style_info = {
+                                'id': style.get('id', 0),
+                                'name': style.get('name', 'Normal'),
+                                'type': style.get('type', 'talk')
+                            }
+                            voice_info['styles'].append(style_info)
+                        
+                        speakers.append(voice_info)
+                    
+                    return speakers
+                else:
+                    print(f"[VoiceVox] Failed to get speakers: {response.status_code}")
+                    return []
+            except Exception as e:
+                print(f"[VoiceVox] Error getting speakers: {e}")
+                return []
+
+        def close(self):
+            """Cleanup VoiceVox process"""
+            self.is_running = False
+            if self.process:
+                try:
+                    self.process.terminate()
+                    self.process.wait(timeout=3)
+                except Exception as e:
+                    print(f"[VoiceVox] Cleanup error: {e}")
+
+# --- TTS Engine Manager --- #
+
+class TTSEngineManager:
+    def __init__(self, piper_bin, model_path, voicevox_bin, voicevox_host, voicevox_port):
+        self.piper_instance = None
+        self.voicevox_instance = None
+        self.current_engine = "piper"  # Default to Piper
+        self.piper_bin = piper_bin
+        self.model_path = model_path
+        self.voicevox_bin = voicevox_bin
+        self.voicevox_host = voicevox_host
+        self.voicevox_port = voicevox_port
+        
+        # VoiceVox speaker caching
+        self._voicevox_speakers_cache = None
+        self._voicevox_speakers_flat_cache = None
+        self._cache_timestamp = None
+        self._cache_duration = 300  # Cache for 5 minutes
+        
+        # Initialize Piper by default
+        self._init_piper()
+        
+        # Preload VoiceVox speakers in background
+        self._preload_voicevox_speakers()
+    
+    def _preload_voicevox_speakers(self):
+        """Preload VoiceVox speakers in a background thread"""
+        def preload_thread():
+            try:
+                print("[TTS] Starting VoiceVox speaker preloading...")
+                # Give VoiceVox a moment to start if it's initializing
+                time.sleep(1)
+                
+                # Initialize VoiceVox if needed
+                if not self.voicevox_instance:
+                    print("[TTS] Initializing VoiceVox for preloading...")
+                    self._init_voicevox()
+                
+                # Load speakers into cache
+                if self.voicevox_instance:
+                    print("[TTS] Fetching speakers from VoiceVox API...")
+                    speakers = self.voicevox_instance.get_speakers()
+                    if speakers:
+                        self._update_speaker_cache(speakers)
+                        print(f"[TTS] Successfully preloaded {len(speakers)} VoiceVox voices")
+                        
+                        # Log some details about what was cached
+                        total_styles = sum(len(voice['styles']) for voice in speakers)
+                        print(f"[TTS] Cached {total_styles} total styles across all voices")
+                    else:
+                        print("[TTS] No VoiceVox speakers available for preloading (empty response)")
+                else:
+                    print("[TTS] VoiceVox instance not available for preloading")
+            except Exception as e:
+                print(f"[TTS] Error during VoiceVox speaker preloading: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        # Start preloading in background thread
+        threading.Thread(target=preload_thread, daemon=True).start()
+    
+    def _update_speaker_cache(self, speakers):
+        """Update the speaker cache with new data"""
+        self._voicevox_speakers_cache = speakers
+        self._cache_timestamp = time.time()
+        
+        # Generate flat cache
+        flat_list = []
+        for voice in speakers:
+            voice_name = voice['name']
+            for style in voice['styles']:
+                flat_list.append({
+                    'id': style['id'],
+                    'name': f"{voice_name} ({style['name']})",
+                    'voice': voice_name,
+                    'style': style['name'],
+                    'type': style['type']
+                })
+        self._voicevox_speakers_flat_cache = flat_list
+    
+    def _is_cache_valid(self):
+        """Check if the speaker cache is still valid"""
+        if self._cache_timestamp is None:
+            return False
+        return (time.time() - self._cache_timestamp) < self._cache_duration
+    
+    def _refresh_speaker_cache(self):
+        """Refresh the speaker cache if needed"""
+        if not self._is_cache_valid():
+            print("[TTS] Speaker cache expired, refreshing...")
+            if self.voicevox_instance:
+                speakers = self.voicevox_instance.get_speakers()
+                if speakers:
+                    self._update_speaker_cache(speakers)
+                    return True
+        return self._voicevox_speakers_cache is not None
+    
+    def _init_piper(self):
+        """Initialize Piper TTS engine"""
+        try:
+            if self.piper_instance:
+                self.piper_instance.close()
+            self.piper_instance = PersistentPiper(self.piper_bin, self.model_path)
+            print("[TTS] Piper engine initialized")
+        except Exception as e:
+            print(f"[TTS] Failed to initialize Piper: {e}")
+    
+    def _init_voicevox(self):
+        """Initialize VoiceVox TTS engine"""
+        try:
+            if self.voicevox_instance:
+                self.voicevox_instance.close()
+            
+            # Get speaker ID from user preferences
+            from config.user_preferences import user_preferences
+            speaker_id = 2  # Default
+            if user_preferences:
+                speaker_id = user_preferences.get_voicevox_speaker_id()
+            
+            self.voicevox_instance = PersistentVoiceVox(
+                self.voicevox_bin, self.voicevox_host, self.voicevox_port, speaker_id
+            )
+            print("[TTS] VoiceVox engine initialized")
+        except Exception as e:
+            print(f"[TTS] Failed to initialize VoiceVox: {e}")
+    
+    def set_engine(self, engine_name):
+        """Switch between TTS engines"""
+        if engine_name not in ["piper", "voicevox"]:
+            print(f"[TTS] Invalid engine name: {engine_name}")
+            return False
+        
+        if engine_name == self.current_engine:
+            print(f"[TTS] Already using {engine_name} engine")
+            return True
+        
+        print(f"[TTS] Switching from {self.current_engine} to {engine_name}")
+        self.current_engine = engine_name
+        
+        if engine_name == "voicevox" and not self.voicevox_instance:
+            self._init_voicevox()
+        elif engine_name == "piper" and not self.piper_instance:
+            self._init_piper()
+        
+        return True
+    
+    def synthesize(self, text, background=False):
+        """Synthesize text using the current engine"""
+        if self.current_engine == "piper" and self.piper_instance:
+            if IS_WINDOWS:
+                return self.piper_instance.synthesize(text, timeout=5.0)
+            else:
+                return self.piper_instance.synthesize(text)
+        elif self.current_engine == "voicevox" and self.voicevox_instance:
+            return self.voicevox_instance.synthesize(text, timeout=10.0)
+        else:
+            print(f"[TTS] No active {self.current_engine} engine instance")
+            return b''
+    
+    def set_voicevox_speaker(self, speaker_id):
+        """Set VoiceVox speaker ID"""
+        if self.voicevox_instance:
+            self.voicevox_instance.set_speaker_id(speaker_id)
+            # Save to preferences
+            from config.user_preferences import user_preferences
+            if user_preferences:
+                user_preferences.set_voicevox_speaker_id(speaker_id)
+        else:
+            print("[TTS] VoiceVox not initialized")
+    
+    def get_voicevox_speakers(self):
+        """Get available VoiceVox speakers (cached)"""
+        # Try to use cache first
+        if self._is_cache_valid() and self._voicevox_speakers_cache:
+            return self._voicevox_speakers_cache
+        
+        # Cache miss or expired, try to refresh
+        if self._refresh_speaker_cache():
+            return self._voicevox_speakers_cache
+        
+        # Fallback to direct API call if cache refresh fails
+        if not self.voicevox_instance:
+            self._init_voicevox()
+        
+        if self.voicevox_instance:
+            speakers = self.voicevox_instance.get_speakers()
+            if speakers:
+                self._update_speaker_cache(speakers)
+                return speakers
+        
+        return []
+    
+    def get_voicevox_speakers_flat(self):
+        """Get VoiceVox speakers as a flat list for UI compatibility (cached)"""
+        # Try to use cache first
+        if self._is_cache_valid() and self._voicevox_speakers_flat_cache:
+            return self._voicevox_speakers_flat_cache
+        
+        # Cache miss or expired, refresh using main method
+        voices = self.get_voicevox_speakers()
+        if self._voicevox_speakers_flat_cache:
+            return self._voicevox_speakers_flat_cache
+        
+        # Fallback generation if cache is empty
+        flat_list = []
+        for voice in voices:
+            voice_name = voice['name']
+            for style in voice['styles']:
+                flat_list.append({
+                    'id': style['id'],
+                    'name': f"{voice_name} ({style['name']})",
+                    'voice': voice_name,
+                    'style': style['name'],
+                    'type': style['type']
+                })
+        
+        return flat_list
+    
+    def refresh_voicevox_speakers_cache(self):
+        """Force refresh the VoiceVox speakers cache"""
+        print("[TTS] Force refreshing VoiceVox speakers cache...")
+        self._cache_timestamp = None  # Invalidate cache
+        if not self.voicevox_instance:
+            self._init_voicevox()
+        
+        if self.voicevox_instance:
+            speakers = self.voicevox_instance.get_speakers()
+            if speakers:
+                self._update_speaker_cache(speakers)
+                print(f"[TTS] Cache refreshed with {len(speakers)} voices")
+                return True
+        
+        print("[TTS] Failed to refresh VoiceVox speakers cache")
+        return False
+    
+    def get_current_engine(self):
+        """Get the name of the current TTS engine"""
+        return self.current_engine
+    
+    def close_all(self):
+        """Close all TTS engines"""
+        if self.piper_instance:
+            self.piper_instance.close()
+        if self.voicevox_instance:
+            self.voicevox_instance.close()
+
 # --- Display Setup --- #
 
 draw_lock = threading.RLock()
@@ -1103,6 +1635,9 @@ def end_batch():
         if op_type == "text":
             layer, font, text, x, y, fill = args
             display_draw_text_immediate(layer, font, text, x, y, fill)
+        elif op_type == "text_inverted":
+            layer_draw, layer_image, font, text, x, y, padding = args
+            display_draw_text_inverted_immediate(layer_draw, layer_image, font, text, x, y, padding)
         elif op_type == "area":
             layer, x, y, width, height, fill = args
             display_draw_area_immediate(layer, x, y, width, height, fill)
@@ -1219,6 +1754,38 @@ def display_draw_text(layer, font, text, x=0, y=0, fill=255):
         _batch_operations.append(("text", (layer, font, text, x, y, fill)))
     else:
         display_draw_text_immediate(layer, font, text, x, y, fill)
+
+def display_draw_text_inverted_immediate(layer_draw, layer_image, font, text, x=0, y=0, padding=1):
+    """Draw inverted text (white background, black text) immediately without batching"""
+    with draw_lock:
+        # Get text dimensions
+        text_width, text_height = get_text_size(text, font)
+        
+        # Calculate background rectangle dimensions with padding
+        bg_width = text_width + (padding * 2)
+        bg_height = text_height + (padding * 2)
+        bg_x = x - padding
+        bg_y = y - padding
+        
+        # Draw white background rectangle
+        layer_draw.rectangle([bg_x, bg_y, bg_x + bg_width, bg_y + bg_height], fill=255)
+        
+        # Draw black text on top
+        layer_draw.text((x, y), text, font=font, fill=0)
+        
+        # Mark the region as dirty for update
+        add_dirty_region(bg_x, bg_y, bg_width, bg_height)
+        
+        # Add debug region if enabled
+        if IS_WINDOWS and hasattr(disp, 'add_debug_region'):
+            disp.add_debug_region(int(bg_x), int(bg_y), int(bg_width), int(bg_height))
+
+def display_draw_text_inverted(layer_draw, layer_image, font, text, x=0, y=0, padding=1):
+    """Draw inverted text with optional batching support"""
+    if _batch_mode:
+        _batch_operations.append(("text_inverted", (layer_draw, layer_image, font, text, x, y, padding)))
+    else:
+        display_draw_text_inverted_immediate(layer_draw, layer_image, font, text, x, y, padding)
 
 def display_draw_icon_immediate(layer, icon_img, x=0, y=height - 8):
     """Draw icon immediately without batching - used internally"""
@@ -1369,6 +1936,20 @@ def display_thread_func():
                             _, font, text, x, y = cmd
                             fill = 255  # Default fill color
                         display_draw_text(overlay_draw, font, text, x, y, fill=fill)
+                    case "draw_base_text_inverted":
+                        if len(cmd) == 6:
+                            _, font, text, x, y, padding = cmd
+                        else:
+                            _, font, text, x, y = cmd
+                            padding = 1  # Default padding
+                        display_draw_text_inverted(base_draw, base_layer, font, text, x, y, padding=padding)
+                    case "draw_overlay_text_inverted":
+                        if len(cmd) == 6:
+                            _, font, text, x, y, padding = cmd
+                        else:
+                            _, font, text, x, y = cmd
+                            padding = 1  # Default padding
+                        display_draw_text_inverted(overlay_draw, overlay_layer, font, text, x, y, padding=padding)
                     case "draw_base_image":
                         _, img, x, y = cmd
                         display_draw_icon(base_layer, img, x, y)
@@ -1441,8 +2022,9 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 
 from config.wordmap import word_map
 
-piper_instance = PersistentPiper(PIPER_BIN, MODEL_PATH)
-atexit.register(lambda: piper_instance.close())
+# Initialize TTS Engine Manager
+tts_manager = TTSEngineManager(PIPER_BIN, MODEL_PATH, VOICEVOX_BIN, VOICEVOX_HOST, VOICEVOX_PORT)
+atexit.register(lambda: tts_manager.close_all())
 
 def apply_word_map(text, word_map):
     # Use regex to replace whole words only
@@ -1474,7 +2056,14 @@ def wrap_raw_audio_as_wav(raw_bytes, sample_rate=22050):
 def play_audio_sync(audio_bytes):
     if IS_WINDOWS:
         try:
-            wav_buf = wrap_raw_audio_as_wav(audio_bytes)
+            # Check if audio is already in WAV format (starts with RIFF header)
+            if audio_bytes.startswith(b'RIFF'):
+                # Already WAV format (VoiceVox)
+                wav_buf = io.BytesIO(audio_bytes)
+            else:
+                # Raw PCM format (Piper) - convert to WAV
+                wav_buf = wrap_raw_audio_as_wav(audio_bytes)
+            
             sound = pygame.mixer.Sound(wav_buf)
             channel = sound.play()
             while channel.get_busy():
@@ -1483,11 +2072,18 @@ def play_audio_sync(audio_bytes):
             print(f"[Audio] Pygame playback error: {e}", flush=True)
     else:
         try:
-            proc = subprocess.Popen([
-                "timeout", "5",
-                "aplay", "-R", "400", "-r", "22050", "-f", "S16_LE", "-t", "raw", "-"
-            ], stdin=subprocess.PIPE)
-            proc.communicate(input=audio_bytes)
+            # Check if audio is already in WAV format
+            if audio_bytes.startswith(b'RIFF'):
+                # WAV format - use aplay directly
+                proc = subprocess.Popen(["timeout", "5", "aplay", "-"], stdin=subprocess.PIPE)
+                proc.communicate(input=audio_bytes)
+            else:
+                # Raw PCM format - specify format parameters
+                proc = subprocess.Popen([
+                    "timeout", "5",
+                    "aplay", "-R", "400", "-r", "22050", "-f", "S16_LE", "-t", "raw", "-"
+                ], stdin=subprocess.PIPE)
+                proc.communicate(input=audio_bytes)
         except Exception as e:
             print(f"[Audio] aplay error: {e}", flush=True)
 
@@ -1495,16 +2091,27 @@ def run_tts(text, background=False):
     if not text.strip():
         return
     
-    cached_file = os.path.join(CACHE_DIR, hash_text(text) + ".raw")
+    # Create cache key based on text and current TTS engine
+    engine_suffix = f"_{tts_manager.get_current_engine()}"
+    cache_key = hash_text(text + engine_suffix)
+    cached_file = os.path.join(CACHE_DIR, cache_key + ".raw")
 
     if os.path.exists(cached_file):
         with open(cached_file, "rb") as f:
-            audio_data = f.read()
+            cached_audio = f.read()
 
         if not background:
-            display_queue.put(("set_screen", "Cached", text))
+            display_queue.put(("set_screen", f"Cached ({tts_manager.get_current_engine().title()})", text))
             display_queue.put(("draw_icon", speaking_icon, 0, height - 8))
-        play_thread = threading.Thread(target=play_audio_sync, args=(audio_data,))
+        
+        # For cached audio, we always have raw PCM format, so wrap as WAV if needed
+        if tts_manager.get_current_engine() == "voicevox":
+            # Convert raw PCM back to WAV for VoiceVox playback compatibility
+            audio_to_play = wrap_raw_audio_as_wav(cached_audio).getvalue()
+        else:
+            audio_to_play = cached_audio
+            
+        play_thread = threading.Thread(target=play_audio_sync, args=(audio_to_play,))
         play_thread.start()
         play_thread.join()
         if not background:
@@ -1512,22 +2119,38 @@ def run_tts(text, background=False):
 
     else:
         if not background:
-            display_queue.put(("set_screen", "Generating", text))
+            display_queue.put(("set_screen", f"Generating ({tts_manager.get_current_engine().title()})", text))
             display_queue.put(("draw_icon", generating_icon, 0, height - 8))
 
         try:
             mappedText = apply_word_map(text, word_map)
-            raw_audio = piper_instance.synthesize(mappedText)
+            raw_audio = tts_manager.synthesize(mappedText)
             if not background:
                 display_queue.put(("clear_icon",))
 
             if raw_audio:
+                # Handle different audio formats for caching
+                audio_to_cache = raw_audio
+                if tts_manager.get_current_engine() == "voicevox":
+                    # VoiceVox returns WAV format, extract raw PCM for consistent caching
+                    try:
+                        wav_buffer = io.BytesIO(raw_audio)
+                        with wave.open(wav_buffer, 'rb') as wav_file:
+                            audio_to_cache = wav_file.readframes(wav_file.getnframes())
+                    except Exception as e:
+                        print(f"[TTS] Failed to extract raw audio from WAV: {e}")
+                        # Use original audio data if extraction fails
+                        audio_to_cache = raw_audio
+                
+                # Cache the processed audio
                 with open(cached_file, "wb") as f:
-                    f.write(raw_audio)
+                    f.write(audio_to_cache)
 
                 if not background:
-                    display_queue.put(("set_screen", "Talking", text))
+                    display_queue.put(("set_screen", f"Talking ({tts_manager.get_current_engine().title()})", text))
                     display_queue.put(("draw_icon", speaking_icon, 0, height - 8))
+                
+                # Play the original audio (preserves format)
                 play_thread = threading.Thread(target=play_audio_sync, args=(raw_audio,))
                 play_thread.start()
                 play_thread.join()
@@ -1710,11 +2333,17 @@ def main():
 
     # Check if Piper binary and model exist
     if not os.path.isfile(PIPER_BIN):
-        display_queue.put(("set_screen", "Error", f"Piper binary not found at:\n{PIPER_BIN}"))
-        time.sleep(5)
+        display_queue.put(("set_screen", "Warning", f"Piper binary not found at:\n{PIPER_BIN}\nVoiceVox only mode."))
+        time.sleep(3)
     if not os.path.isfile(MODEL_PATH):
-        display_queue.put(("set_screen", "Error", f"Model not found at:\n{MODEL_PATH}"))
-        time.sleep(5)
+        display_queue.put(("set_screen", "Warning", f"Piper model not found at:\n{MODEL_PATH}\nVoiceVox only mode."))
+        time.sleep(3)
+    
+    # Check VoiceVox binary (optional)
+    if not os.path.isfile(VOICEVOX_BIN):
+        print(f"[Main] VoiceVox binary not found at: {VOICEVOX_BIN} (optional)")
+    else:
+        print(f"[Main] VoiceVox binary found at: {VOICEVOX_BIN}")
 
     display_queue.put(("set_screen", "Starting", "Please wait..."))
 
@@ -1730,7 +2359,6 @@ def main():
         "screen_width": width,
         "screen_height": height,
         "display_queue": display_queue,
-        "run_tts": run_tts,
         "pressed_keys": keys_pressed,
         "load_icon": load_icon,
         "audio": {
@@ -1748,6 +2376,16 @@ def main():
             "is_stream_playing": is_audio_stream_playing,
             "is_stream_paused": is_audio_stream_paused,
             "get_stream_info": get_audio_stream_info,
+        },
+        "tts": {
+            "run": run_tts,
+            "set_engine": lambda engine: tts_manager.set_engine(engine),
+            "get_engine": lambda: tts_manager.get_current_engine(),
+            "set_voicevox_speaker": lambda speaker_id: tts_manager.set_voicevox_speaker(speaker_id),
+            "get_available_engines": lambda: ["piper", "voicevox"],
+            "get_voicevox_speakers": lambda: tts_manager.get_voicevox_speakers(),
+            "get_voicevox_speakers_flat": lambda: tts_manager.get_voicevox_speakers_flat(),
+            "refresh_voicevox_speakers": lambda: tts_manager.refresh_voicevox_speakers_cache(),
         },
         "fonts": {
             "small": fontSmall,
@@ -1772,6 +2410,7 @@ def main():
         "drawing": {
             # Base layer drawing (static content)
             "draw_text": lambda text, x, y, font=None, fill=255: display_queue.put(("draw_base_text", font or fontSmall, text, x, y, fill)),
+            "draw_text_inverted": lambda text, x, y, font=None, padding=1: display_queue.put(("draw_base_text_inverted", font or fontSmall, text, x, y, padding)),
             "draw_image": lambda img, x, y: display_queue.put(("draw_base_image", img, x, y)),
             "draw_area": lambda x, y, width, height, fill=255: display_queue.put(("draw_base_area", x, y, width, height, fill)),
             "clear_area": lambda x, y, width, height: display_queue.put(("clear_base_area", x, y, width, height)),
@@ -1779,6 +2418,7 @@ def main():
             
             # Overlay layer drawing (temporary/dynamic content)
             "draw_overlay_text": lambda text, x, y, font=None, fill=255: display_queue.put(("draw_overlay_text", font or fontSmall, text, x, y, fill)),
+            "draw_overlay_text_inverted": lambda text, x, y, font=None, padding=1: display_queue.put(("draw_overlay_text_inverted", font or fontSmall, text, x, y, padding)),
             "draw_overlay_image": lambda img, x, y: display_queue.put(("draw_overlay_image", img, x, y)),
             "draw_overlay_area": lambda x, y, width, height, fill=255: display_queue.put(("draw_overlay_area", x, y, width, height, fill)),
             "clear_overlay_area": lambda x, y, width, height: display_queue.put(("clear_overlay_area", x, y, width, height)),
@@ -1805,6 +2445,13 @@ def main():
     from config.user_preferences import initialize_preferences
     user_prefs = initialize_preferences(CONFIG_DIR)
     context["user_preferences"] = user_prefs
+    
+    # Set TTS engine based on user preferences
+    preferred_engine = user_prefs.get_tts_engine()
+    if tts_manager.set_engine(preferred_engine):
+        print(f"[Main] TTS engine set to: {preferred_engine}")
+    else:
+        print(f"[Main] Failed to set TTS engine to: {preferred_engine}, using default")
     
     # Create and use the reusable AppManager
     from app_manager import AppManager

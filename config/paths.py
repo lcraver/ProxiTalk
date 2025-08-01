@@ -1,5 +1,8 @@
 PIPER_BIN = "/home/dietpi/piper/piper"
 MODEL_PATH = "/home/dietpi/piper/en_GB-cori-medium.onnx"
+VOICEVOX_BIN = "/home/dietpi/voicevox/run"
+VOICEVOX_HOST = "localhost"
+VOICEVOX_PORT = 50021
 CACHE_DIR = "/home/dietpi/piper_cache"
 CONFIG_DIR = "/home/dietpi/config"
 APPS_DIR = "/home/dietpi/apps"

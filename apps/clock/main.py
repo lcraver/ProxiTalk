@@ -69,7 +69,7 @@ class App(AppBase):
                 self.timer_finished = True
                 self.timer_running = False
                 self.play_sfx(self.path + "chime.wav")
-                self.context["run_tts"]("Timer finished!", background=True)
+                self.context["tts"]["run"]("Timer finished!", background=True)
                 
         sub_text = None
         
@@ -168,7 +168,7 @@ class App(AppBase):
         # Clock mode specific keys
         elif self.mode == "clock":
             if keycode == "KEY_ENTER":
-                self.context["run_tts"](f"The current time is {self.current_time}", background=True)
+                self.context["tts"]["run"](f"The current time is {self.current_time}", background=True)
         
         # Timer mode specific keys
         elif self.mode == "timer":
@@ -184,7 +184,7 @@ class App(AppBase):
             self.timer_remaining = self.timer_minutes * 60 + self.timer_seconds
             self.input_mode = None
             self.timer_finished = False
-            self.context["run_tts"](f"Timer set for {self.timer_minutes} minutes and {self.timer_seconds} seconds", background=True)
+            self.context["tts"]["run"](f"Timer set for {self.timer_minutes} minutes and {self.timer_seconds} seconds", background=True)
         
         elif keycode == "KEY_TAB":
             # Switch between minutes and seconds
@@ -216,18 +216,18 @@ class App(AppBase):
         elif keycode == "KEY_S":
             if not self.timer_running:
                 self.input_mode = "minutes"
-                self.context["run_tts"]("Setting timer duration", background=True)
+                self.context["tts"]["run"]("Setting timer duration", background=True)
         
         elif keycode == "KEY_ENTER":
             if self.timer_remaining > 0:
                 minutes = self.timer_remaining // 60
                 seconds = self.timer_remaining % 60
                 if self.timer_running:
-                    self.context["run_tts"](f"Timer running: {minutes} minutes and {seconds} seconds remaining", background=True)
+                    self.context["tts"]["run"](f"Timer running: {minutes} minutes and {seconds} seconds remaining", background=True)
                 else:
-                    self.context["run_tts"](f"Timer paused: {minutes} minutes and {seconds} seconds remaining", background=True)
+                    self.context["tts"]["run"](f"Timer paused: {minutes} minutes and {seconds} seconds remaining", background=True)
             else:
-                self.context["run_tts"]("No timer set", background=True)
+                self.context["tts"]["run"]("No timer set", background=True)
     
     def switch_to_timer(self):
         """Switch from clock to timer mode"""

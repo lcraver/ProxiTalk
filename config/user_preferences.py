@@ -33,6 +33,8 @@ class UserPreferences:
             "hidden_apps": [],
             "pinned_apps": [],
             "disabled_overlays": [],
+            "tts_engine": "piper",  # Default TTS engine: "piper" or "voicevox"
+            "voicevox_speaker_id": 2,  # Default VoiceVox speaker ID
         }
     
     def _save_preferences(self) -> bool:
@@ -175,6 +177,27 @@ class UserPreferences:
             return self.enable_overlay(overlay_name)
         else:
             return self.disable_overlay(overlay_name)
+    
+    def get_tts_engine(self) -> str:
+        """Get the current TTS engine preference"""
+        return self._preferences.get("tts_engine", "piper")
+    
+    def set_tts_engine(self, engine: str) -> bool:
+        """Set the TTS engine preference (piper or voicevox)"""
+        if engine not in ["piper", "voicevox"]:
+            print(f"[Preferences] Invalid TTS engine: {engine}")
+            return False
+        self._preferences["tts_engine"] = engine
+        return self._save_preferences()
+    
+    def get_voicevox_speaker_id(self) -> int:
+        """Get the VoiceVox speaker ID"""
+        return self._preferences.get("voicevox_speaker_id", 2)
+    
+    def set_voicevox_speaker_id(self, speaker_id: int) -> bool:
+        """Set the VoiceVox speaker ID"""
+        self._preferences["voicevox_speaker_id"] = speaker_id
+        return self._save_preferences()
 
 # Global instance - will be initialized by main app
 user_preferences = None

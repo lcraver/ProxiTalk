@@ -231,7 +231,7 @@ self.context["audio"]["play_sfx"](self.context["app_path"] + "sound.wav")
 self.context["audio"]["play_music"](self.context["app_path"] + "music.wav", loop=True)
 
 # Text-to-speech
-self.context["tts"]["run_tts"]("Hello, this will be spoken!", background=True)
+self.context["tts"]["run"]("Hello, this will be spoken!", background=True)
 ```
 
 ### App Metadata

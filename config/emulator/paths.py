@@ -1,5 +1,8 @@
 PIPER_BIN = "C:\\Users\\Pidge\\Documents\\ProxiTalk\\tts\\piper\\piper.exe"
 MODEL_PATH = "C:\\Users\\Pidge\\Documents\\ProxiTalk\\tts\\piper\\en_GB-cori-medium.onnx"
+VOICEVOX_BIN = "C:\\Users\\Pidge\\AppData\\Local\\Programs\\VOICEVOX\\voicevox.exe"
+VOICEVOX_HOST = "localhost"
+VOICEVOX_PORT = 50021
 CACHE_DIR = "C:\\Users\\Pidge\\Documents\\ProxiTalk\\tts\\piper_cache"
 CONFIG_DIR = "C:\\Users\\Pidge\\Documents\\ProxiTalk\\config"
 APPS_DIR = "C:\\Users\\Pidge\\Documents\\ProxiTalk\\apps"

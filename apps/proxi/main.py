@@ -204,8 +204,8 @@ class App(AppBase):
                     
                     try:
                         # Run TTS (generation + playback) - this will handle the thread internally
-                        self.context["run_tts"](text, background=True)
-                        # The run_tts function handles threading internally, so we're done when it returns
+                        self.context["tts"]["run"](text, background=True)
+                        # The tts run function handles threading internally, so we're done when it returns
                         
                         # Mark this task as done
                         self.tts_queue.task_done()

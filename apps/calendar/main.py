@@ -351,10 +351,10 @@ class App(AppBase):
             print(f"Selected date: {date_info}")
             
             # Use TTS-friendly format for better speech
-            if "run_tts" in self.context:
+            if "tts" in self.context:
                 tts_info = self.get_date_info_for_tts()
                 print(f"TTS info: {tts_info}")
-                self.context["run_tts"](tts_info, background=True)
+                self.context["tts"]["run"](tts_info, background=True)
         elif keycode == "KEY_E":
             # Show events for selected date and use TTS
             events = self.get_events_for_selected_date()
@@ -391,13 +391,13 @@ class App(AppBase):
                 print(f"Events TTS: {events_text}")
                 
                 # Use TTS to speak the events
-                if "run_tts" in self.context:
-                    self.context["run_tts"](events_text, background=True)
+                if "tts" in self.context:
+                    self.context["tts"]["run"](events_text, background=True)
             else:
                 no_events_text = f"No events scheduled for {self.selected_date.strftime('%A %B %d')}"
                 print(no_events_text)
-                if "run_tts" in self.context:
-                    self.context["run_tts"](no_events_text, background=True)
+                if "tts" in self.context:
+                    self.context["tts"]["run"](no_events_text, background=True)
         elif keycode == "KEY_F5":
             # Reload events from file
             self.reload_events()
