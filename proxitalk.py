@@ -37,6 +37,11 @@ def is_admin():
     except:
         return False
 
+import pygame
+import threading
+import io
+import wave
+
 if IS_WINDOWS:
     # use the keyboard module or mock input
     import keyboard
@@ -45,10 +50,8 @@ else:
     from evdev import InputDevice, categorize, ecodes
 
 if IS_WINDOWS:
-    import pygame
-    import threading
-    import io
-    import wave
+    import ctypes
+    from ctypes import wintypes
 
     class EmulatedDisplay:
         def __init__(self, width, height, scale=4):
@@ -67,9 +70,34 @@ if IS_WINDOWS:
             self._debug_regions = []
             self._debug_overlay_duration = 1/20 * 5  # Show overlay for 5 frames at 20 FPS
             self._show_debug_overlay = False  # Toggle this to enable/disable debug overlay
+            
+            # Window focus tracking
+            self._window_focused = True
+            self._focus_check_timer = 0
 
             self._thread = threading.Thread(target=self._run_pygame_loop, daemon=True)
             self._thread.start()
+        
+        def is_window_focused(self):
+            """Check if the pygame window is currently focused using Windows API"""
+            if not IS_WINDOWS:
+                return self._window_focused
+                
+            try:
+                # Get the currently active window
+                foreground_window = ctypes.windll.user32.GetForegroundWindow()
+                
+                # Check if any window with our title is active
+                window_title = "ProxiTalk Emulated Display"
+                title_buffer = ctypes.create_unicode_buffer(256)
+                ctypes.windll.user32.GetWindowTextW(foreground_window, title_buffer, 256)
+                active_title = title_buffer.value
+                
+                return active_title == window_title
+                
+            except Exception as e:
+                print(f"[Focus] Error checking window focus: {e}")
+                return self._window_focused
 
         def fill(self, color):
             with self._update_lock:
@@ -114,74 +142,119 @@ if IS_WINDOWS:
 
         def _run_pygame_loop(self):
             import time  # Import time module for timestamp calculations
-            pygame.init()
-            self.screen = pygame.display.set_mode((self.width * self.scale, self.height * self.scale))
-            pygame.display.set_caption("ProxiTalk Emulated Display")
-            clock = pygame.time.Clock()
-            last_surface = None  # Keep track of the last displayed surface
-
-            while not self._stop_event.is_set():
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:
-                        self._stop_event.set()
-                    elif event.type == pygame.KEYDOWN:
-                        # Toggle debug overlay with F1 key
-                        if event.key == pygame.K_F1:
-                            self._show_debug_overlay = not self._show_debug_overlay
-                            print(f"[Debug] Region overlay: {'ON' if self._show_debug_overlay else 'OFF'}")
-
-                current_time = time.time()
-                needs_redraw = False
+            try:
+                pygame.init()
+                self.screen = pygame.display.set_mode((self.width * self.scale, self.height * self.scale))
+                pygame.display.set_caption("ProxiTalk Emulated Display")
+                clock = pygame.time.Clock()
+                last_surface = None  # Keep track of the last displayed surface
                 
-                with self._update_lock:
-                    # Check if we have a new image to display
-                    if self._pending_image:
-                        img = self._pending_image
-                        size = img.size
-
-                        # Convert to RGB for pygame compatibility
-                        img_rgb = img.convert("RGB")
-                        data = img_rgb.tobytes()
-                        last_surface = pygame.image.fromstring(data, size, "RGB")
-                        last_surface = pygame.transform.scale(last_surface, (self.width * self.scale, self.height * self.scale))
-                        needs_redraw = True
-                        self._pending_image = None
-                    
-                    # Always process debug overlay if enabled, even without new image
-                    if self._show_debug_overlay:
-                        # Remove expired debug regions
-                        old_region_count = len(self._debug_regions)
-                        self._debug_regions = [
-                            region for region in self._debug_regions 
-                            if current_time - region['timestamp'] < self._debug_overlay_duration
-                        ]
-                        # If regions were removed or still exist, we need to redraw
-                        if old_region_count != len(self._debug_regions) or self._debug_regions:
-                            needs_redraw = True
+                print("[Display] Pygame display initialized successfully")
                 
-                # Redraw if we have changes or active debug regions
-                if needs_redraw and last_surface:
-                    self.screen.blit(last_surface, (0, 0))
+            except Exception as e:
+                print(f"[Error] Failed to initialize pygame display: {e}")
+                self._stop_event.set()
+                return
+
+            try:
+                while not self._stop_event.is_set():
+                    try:
+                        for event in pygame.event.get():
+                            if event.type == pygame.QUIT:
+                                print("[Display] Received QUIT event")
+                                self._stop_event.set()
+                            elif event.type == pygame.KEYDOWN:
+                                # Toggle debug overlay with F1 key
+                                if event.key == pygame.K_F1:
+                                    self._show_debug_overlay = not self._show_debug_overlay
+                                    print(f"[Debug] Region overlay: {'ON' if self._show_debug_overlay else 'OFF'}")
+                    except Exception as e:
+                        print(f"[Error] Exception in pygame event handling: {e}")
+                        continue
+
+                    current_time = time.time()
                     
-                    # Draw debug overlay for region updates
-                    if self._show_debug_overlay:
-                        for region in self._debug_regions:
-                            # Calculate fade based on age
-                            age = current_time - region['timestamp']
-                            alpha = max(0, min(255, int(255 * (1.0 - age / self._debug_overlay_duration))))
-                            
-                            if alpha > 0:
-                                # Create a red transparent surface
-                                overlay = pygame.Surface((region['width'] * self.scale, region['height'] * self.scale))
-                                overlay.set_alpha(alpha // 2)  # Make it semi-transparent
-                                overlay.fill((255, 0, 0))  # Red color
+                    # Check window focus periodically using Windows API instead of pygame events
+                    if current_time - self._focus_check_timer > 0.5:  # Check every 500ms
+                        old_focus_state = self._window_focused
+                        if IS_WINDOWS:
+                            try:
+                                # Get the currently active window
+                                foreground_window = ctypes.windll.user32.GetForegroundWindow()
                                 
-                                # Blit the overlay
-                                self.screen.blit(overlay, (region['x'] * self.scale, region['y'] * self.scale))
+                                # Check if any window with our title is active
+                                window_title = "ProxiTalk Emulated Display"
+                                title_buffer = ctypes.create_unicode_buffer(256)
+                                ctypes.windll.user32.GetWindowTextW(foreground_window, title_buffer, 256)
+                                active_title = title_buffer.value
+                                self._window_focused = (active_title == window_title)
+                                
+                                # Log focus changes
+                                if old_focus_state != self._window_focused:
+                                    print(f"[Focus] Window focus changed: {self._window_focused}")
+                                    
+                            except Exception as e:
+                                print(f"[Focus] Error checking window focus: {e}")
+                        
+                        self._focus_check_timer = current_time
                     
-                    pygame.display.flip()
+                    needs_redraw = False
+                
+                    with self._update_lock:
+                        # Check if we have a new image to display
+                        if self._pending_image:
+                            img = self._pending_image
+                            size = img.size
 
-                clock.tick(12)  # Limit to 12 FPS
+                            # Convert to RGB for pygame compatibility
+                            img_rgb = img.convert("RGB")
+                            data = img_rgb.tobytes()
+                            last_surface = pygame.image.fromstring(data, size, "RGB")
+                            last_surface = pygame.transform.scale(last_surface, (self.width * self.scale, self.height * self.scale))
+                            needs_redraw = True
+                            self._pending_image = None
+                        
+                        # Always process debug overlay if enabled, even without new image
+                        if self._show_debug_overlay:
+                            # Remove expired debug regions
+                            old_region_count = len(self._debug_regions)
+                            self._debug_regions = [
+                                region for region in self._debug_regions 
+                                if current_time - region['timestamp'] < self._debug_overlay_duration
+                            ]
+                            # If regions were removed or still exist, we need to redraw
+                            if old_region_count != len(self._debug_regions) or self._debug_regions:
+                                needs_redraw = True
+                    
+                    # Redraw if we have changes or active debug regions
+                    if needs_redraw and last_surface:
+                        self.screen.blit(last_surface, (0, 0))
+                        
+                        # Draw debug overlay for region updates
+                        if self._show_debug_overlay:
+                            for region in self._debug_regions:
+                                # Calculate fade based on age
+                                age = current_time - region['timestamp']
+                                alpha = max(0, min(255, int(255 * (1.0 - age / self._debug_overlay_duration))))
+                                
+                                if alpha > 0:
+                                    # Create a red transparent surface
+                                    overlay = pygame.Surface((region['width'] * self.scale, region['height'] * self.scale))
+                                    overlay.set_alpha(alpha // 2)  # Make it semi-transparent
+                                    overlay.fill((255, 0, 0))  # Red color
+                                    
+                                    # Blit the overlay
+                                    self.screen.blit(overlay, (region['x'] * self.scale, region['y'] * self.scale))
+                        
+                        pygame.display.flip()
+
+                    clock.tick(12)  # Limit to 12 FPS
+                    
+            except Exception as e:
+                print(f"[Error] Critical error in pygame main loop: {e}")
+                self._stop_event.set()
+            finally:
+                print("[Display] Pygame loop ended")
 
         def stop(self):
             self._stop_event.set()
@@ -393,18 +466,17 @@ class AudioStreamer:
             return False
         
         # Check if pygame mixer is initialized
-        if IS_WINDOWS:
-            try:
+        try:
+            mixer_info = pygame.mixer.get_init()
+            if mixer_info is None:
+                print(f"[AudioStream] Pygame mixer not initialized, initializing...", flush=True)
+                pygame.mixer.init(frequency=22050, size=-16, channels=1)
                 mixer_info = pygame.mixer.get_init()
-                if mixer_info is None:
-                    print(f"[AudioStream] Pygame mixer not initialized, initializing...", flush=True)
-                    pygame.mixer.init(frequency=22050, size=-16, channels=1)
-                    mixer_info = pygame.mixer.get_init()
-                
-                print(f"[AudioStream] Pygame mixer settings: {mixer_info}", flush=True)
-            except Exception as e:
-                print(f"[AudioStream] Error checking pygame mixer: {e}", flush=True)
-                return False
+            
+            print(f"[AudioStream] Pygame mixer settings: {mixer_info}", flush=True)
+        except Exception as e:
+            print(f"[AudioStream] Error checking pygame mixer: {e}", flush=True)
+            return False
         
         print(f"[AudioStream] Starting stream for: {audio_file_path}", flush=True)
         
@@ -416,22 +488,18 @@ class AudioStreamer:
         self.start_time = time.time() - start_offset
         self.pause_time = 0
         
-        if IS_WINDOWS:
-            try:
-                self.stream_thread = threading.Thread(
-                    target=self._stream_audio_loop, 
-                    args=(audio_file_path, start_offset), 
-                    daemon=True
-                )
-                self.stream_thread.start()
-                print(f"[AudioStream] Stream thread started", flush=True)
-                return True
-            except Exception as e:
-                print(f"[AudioStream] Error starting stream thread: {e}", flush=True)
-                self.is_streaming = False
-                return False
-        else:
-            print("[AudioStream] Audio streaming only supported on Windows", flush=True)
+        try:
+            self.stream_thread = threading.Thread(
+                target=self._stream_audio_loop, 
+                args=(audio_file_path, start_offset), 
+                daemon=True
+            )
+            self.stream_thread.start()
+            print(f"[AudioStream] Stream thread started", flush=True)
+            return True
+        except Exception as e:
+            print(f"[AudioStream] Error starting stream thread: {e}", flush=True)
+            self.is_streaming = False
             return False
     
     def _stream_audio_loop(self, audio_file_path: str, start_offset: float):
@@ -503,8 +571,7 @@ class AudioStreamer:
         self._stop_event.set()
         
         # Stop all pygame channels
-        if IS_WINDOWS:
-            pygame.mixer.stop()
+        pygame.mixer.stop()
         
         if self.stream_thread and self.stream_thread.is_alive():
             self.stream_thread.join(timeout=1.0)
@@ -1391,9 +1458,8 @@ def apply_word_map(text, word_map):
 def hash_text(text):
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
-# Initialize Pygame mixer if running on Windows
-if IS_WINDOWS:
-    pygame.mixer.init(frequency=22050, size=-16, channels=1)
+# Initialize Pygame mixer for all platforms
+pygame.mixer.init(frequency=22050, size=-16, channels=1)
 
 def wrap_raw_audio_as_wav(raw_bytes, sample_rate=22050):
     buffer = io.BytesIO()
@@ -1538,14 +1604,23 @@ if IS_WINDOWS:
         return event
 
     class WindowsInputDevice:
+        def __init__(self, display_instance):
+            self.display = display_instance
+            
         def read_loop(self):
             while True:
                 kb_event = keyboard.read_event()
                 if kb_event.event_type in ("down", "up"):
-                    yield EvdevLikeEvent(kb_event)
+                    # Only yield events if the emulator window is focused
+                    if self.display and self.display.is_window_focused():
+                        yield EvdevLikeEvent(kb_event)
+                    # Small delay to prevent busy waiting when not focused
+                    elif not self.display.is_window_focused():
+                        import time
+                        time.sleep(0.01)
 
     def wait_for_keyboard():
-        return WindowsInputDevice()
+        return WindowsInputDevice(disp)
 else:
     import evdev
     def wait_for_keyboard(max_retries=24, retry_delay=2.5):
