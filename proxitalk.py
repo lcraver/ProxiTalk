@@ -1748,11 +1748,11 @@ def display_draw_text(layer, font, text, x=0, y=0, fill=255):
     else:
         display_draw_text_immediate(layer, font, text, x, y, fill)
 
-def display_draw_text_inverted_immediate(layer_draw, layer_image, font, text, x=0, y=0, padding=1):
+def display_draw_text_inverted_immediate(layer_draw, layer_image, _font, text, x=0, y=0, padding=1):
     """Draw inverted text (white background, black text) immediately without batching"""
     with draw_lock:
         # Get text dimensions
-        text_width, text_height = get_text_size(text, font)
+        text_width, text_height = get_text_size(text, _font)
         
         # Calculate background rectangle dimensions with padding
         bg_width = text_width + (padding * 2)
@@ -1761,10 +1761,15 @@ def display_draw_text_inverted_immediate(layer_draw, layer_image, font, text, x=
         bg_y = y - padding
         
         # Draw white background rectangle
+
         layer_draw.rectangle([bg_x, bg_y, bg_x + bg_width, bg_y + bg_height], fill=255)
         
+        if _font == fontSmall:
+            # Adjust y position for small font
+            y -= 1
+        
         # Draw black text on top
-        layer_draw.text((x, y-1), text, font=font, fill=0)
+        layer_draw.text((x, y), text, font=_font, fill=0)
         
         # Mark the region as dirty for update
         add_dirty_region(bg_x, bg_y, bg_width, bg_height)
@@ -2081,11 +2086,29 @@ def play_audio_sync(audio_bytes):
             print(f"[Audio] aplay error: {e}", flush=True)
 
 def run_tts(text, background=False):
+    """
+    Generate and play TTS audio with intelligent caching.
+    
+    Cache keys include TTS engine, VoiceVox speaker ID, and Piper model
+    to ensure cached audio matches the current voice/style configuration.
+    """
     if not text.strip():
         return
     
-    # Create cache key based on text and current TTS engine
+    # Create cache key based on text, current TTS engine, and voice/style
     engine_suffix = f"_{tts_manager.get_current_engine()}"
+    
+    # Add voice/model specific information to cache key
+    if tts_manager.get_current_engine() == "voicevox":
+        # Include VoiceVox speaker ID to ensure correct voice caching
+        from config.user_preferences import user_preferences
+        speaker_id = user_preferences.get_voicevox_speaker_id() if user_preferences else 2
+        engine_suffix += f"_speaker_{speaker_id}"
+    elif tts_manager.get_current_engine() == "piper":
+        # Include Piper model path to handle different models
+        model_filename = os.path.basename(MODEL_PATH) if MODEL_PATH else "unknown"
+        engine_suffix += f"_model_{model_filename}"
+    
     cache_key = hash_text(text + engine_suffix)
     cached_file = os.path.join(CACHE_DIR, cache_key + ".raw")
 
@@ -2283,10 +2306,10 @@ def get_text_size(text, _font):
     
     if _font == fontSmall:
         # For small font, we want to ensure it fits within the expected line height
-        height = max(height, 4)
+        height = 4
         width -= 1
     elif _font == font:
-        height = max(height, 9)
+        height = 9
         width -= 1
     
     return width, height
@@ -2310,6 +2333,36 @@ def draw_text_aligned(layer, text, x, y, font, fill=255):
     # Adjust y position by the offset to align text properly
     adjusted_y = y - offset
     layer.text((x, adjusted_y), text, font=font, fill=fill)
+
+# --- Context drawing functions that return size --- #
+
+def draw_text_with_size(text, x, y, font=None, fill=255):
+    """Draw text on base layer and return (width, height) of drawn text"""
+    actual_font = font or fontSmall
+    display_queue.put(("draw_base_text", actual_font, text, x, y, fill))
+    return get_text_size(text, actual_font)
+
+def draw_text_inverted_with_size(text, x, y, font=None, padding=1):
+    """Draw inverted text on base layer and return (width, height) of drawn area including padding"""
+    actual_font = font or fontSmall
+    display_queue.put(("draw_base_text_inverted", actual_font, text, x, y, padding))
+    text_width, text_height = get_text_size(text, actual_font)
+    # Include padding in the returned size
+    return (text_width + (padding * 2), text_height + (padding * 2))
+
+def draw_overlay_text_with_size(text, x, y, font=None, fill=255):
+    """Draw text on overlay layer and return (width, height) of drawn text"""
+    actual_font = font or fontSmall
+    display_queue.put(("draw_overlay_text", actual_font, text, x, y, fill))
+    return get_text_size(text, actual_font)
+
+def draw_overlay_text_inverted_with_size(text, x, y, font=None, padding=1):
+    """Draw inverted text on overlay layer and return (width, height) of drawn area including padding"""
+    actual_font = font or fontSmall
+    display_queue.put(("draw_overlay_text_inverted", actual_font, text, x, y, padding))
+    text_width, text_height = get_text_size(text, actual_font)
+    # Include padding in the returned size
+    return (text_width + (padding * 2), text_height + (padding * 2))
 
 def main():
     # Start display thread
@@ -2400,16 +2453,16 @@ def main():
         # New region-based drawing functions for apps
         "drawing": {
             # Base layer drawing (static content)
-            "draw_text": lambda text, x, y, font=None, fill=255: display_queue.put(("draw_base_text", font or fontSmall, text, x, y, fill)),
-            "draw_text_inverted": lambda text, x, y, font=None, padding=1: display_queue.put(("draw_base_text_inverted", font or fontSmall, text, x, y, padding)),
+            "draw_text": draw_text_with_size,
+            "draw_text_inverted": draw_text_inverted_with_size,
             "draw_image": lambda img, x, y: display_queue.put(("draw_base_image", img, x, y)),
             "draw_area": lambda x, y, width, height, fill=255: display_queue.put(("draw_base_area", x, y, width, height, fill)),
             "clear_area": lambda x, y, width, height: display_queue.put(("clear_base_area", x, y, width, height)),
             "clear_screen": lambda: display_queue.put(("clear_base",)),
             
             # Overlay layer drawing (temporary/dynamic content)
-            "draw_overlay_text": lambda text, x, y, font=None, fill=255: display_queue.put(("draw_overlay_text", font or fontSmall, text, x, y, fill)),
-            "draw_overlay_text_inverted": lambda text, x, y, font=None, padding=1: display_queue.put(("draw_overlay_text_inverted", font or fontSmall, text, x, y, padding)),
+            "draw_overlay_text": draw_overlay_text_with_size,
+            "draw_overlay_text_inverted": draw_overlay_text_inverted_with_size,
             "draw_overlay_image": lambda img, x, y: display_queue.put(("draw_overlay_image", img, x, y)),
             "draw_overlay_area": lambda x, y, width, height, fill=255: display_queue.put(("draw_overlay_area", x, y, width, height, fill)),
             "clear_overlay_area": lambda x, y, width, height: display_queue.put(("clear_overlay_area", x, y, width, height)),
