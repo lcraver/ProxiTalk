@@ -604,10 +604,10 @@ class App(AppBase):
 
     def handle_main_key(self, key):
         """Handle key presses in main menu"""
-        if key == 'KEY_UP':
+        if key == 'KEY_UP' or key == 'KEY_W':
             self.selected_item = (self.selected_item -
                                   1) % len(self.menu_items)
-        elif key == 'KEY_DOWN':
+        elif key == 'KEY_DOWN' or key == 'KEY_S':
             self.selected_item = (self.selected_item +
                                   1) % len(self.menu_items)
         elif key == 'KEY_ENTER':
@@ -691,15 +691,15 @@ class App(AppBase):
                 self.in_submenu = False
                 self.submenu_type = None
                 self.active_panel = "voice"
-        elif key == 'KEY_LEFT':
+        elif key == 'KEY_LEFT' or key == 'KEY_A':
             # Switch to voice panel when in voice submenu
             if self.submenu_type == "voice":
                 self.active_panel = "voice"
-        elif key == 'KEY_RIGHT':
+        elif key == 'KEY_RIGHT' or key == 'KEY_D':
             # Switch to style panel when in voice submenu and styles are available
             if self.submenu_type == "voice" and self.current_voice and self.current_voice['styles']:
                 self.active_panel = "style"
-        elif key == 'KEY_UP':
+        elif key == 'KEY_UP' or key == 'KEY_W':
             if self.submenu_type == "engine":
                 self.engine_index = (self.engine_index -
                                      1) % len(self.available_engines)
@@ -728,7 +728,7 @@ class App(AppBase):
                     self.current_style_index = (
                         self.current_style_index - 1) % len(self.current_voice['styles'])
                     self.update_style_scroll()
-        elif key == 'KEY_DOWN':
+        elif key == 'KEY_DOWN' or key == 'KEY_S':
             if self.submenu_type == "engine":
                 self.engine_index = (self.engine_index +
                                      1) % len(self.available_engines)

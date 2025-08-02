@@ -1068,18 +1068,34 @@ else:
             """Start VoiceVox engine process"""
             try:
                 print(f"[VoiceVox] Starting VoiceVox engine: {self.voicevox_bin}")
+                print(f"[VoiceVox] Target URL: {self.base_url}")
+                
+                # Check if the binary exists before trying to start it
+                if not os.path.exists(self.voicevox_bin):
+                    print(f"[VoiceVox] ERROR: Binary not found at {self.voicevox_bin}")
+                    self.is_running = False
+                    return
+                
                 self.process = subprocess.Popen(
                     [self.voicevox_bin],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL
                 )
-                # Wait a moment for the server to start
-                time.sleep(3)
-                self.is_running = self._check_server_status()
-                if self.is_running:
-                    print(f"[VoiceVox] Engine started successfully at {self.base_url}")
-                else:
-                    print(f"[VoiceVox] Failed to start engine or server not responding")
+                # Wait longer for the server to start on Linux (VoiceVox can be slower)
+                print("[VoiceVox] Waiting for engine to initialize...")
+                time.sleep(5)
+                
+                # Try multiple times with increasing delays to ensure server is ready
+                for attempt in range(5):
+                    if self._check_server_status():
+                        self.is_running = True
+                        print(f"[VoiceVox] Engine started successfully at {self.base_url} (attempt {attempt + 1})")
+                        return
+                    print(f"[VoiceVox] Server not ready yet, waiting... (attempt {attempt + 1}/5)")
+                    time.sleep(2)
+                
+                print(f"[VoiceVox] Failed to start engine or server not responding after multiple attempts")
+                self.is_running = False
             except Exception as e:
                 print(f"[VoiceVox] Failed to start engine: {e}")
                 self.is_running = False
@@ -1087,9 +1103,23 @@ else:
         def _check_server_status(self):
             """Check if VoiceVox server is responding"""
             try:
-                response = requests.get(f"{self.base_url}/version", timeout=2)
-                return response.status_code == 200
-            except:
+                response = requests.get(f"{self.base_url}/version", timeout=5)
+                if response.status_code == 200:
+                    version_info = response.json()
+                    print(f"[VoiceVox] Server status OK - Version: {version_info}")
+                    return True
+                else:
+                    print(f"[VoiceVox] Server status check failed with HTTP {response.status_code}")
+                    print(f"[VoiceVox] Response: {response.text}")
+                    return False
+            except requests.exceptions.Timeout as e:
+                print(f"[VoiceVox] Server status check timeout after 5s: {e}")
+                return False
+            except requests.exceptions.ConnectionError as e:
+                print(f"[VoiceVox] Server connection error (is VoiceVox running?): {e}")
+                return False
+            except Exception as e:
+                print(f"[VoiceVox] Server status check error: {e}")
                 return False
 
         def synthesize(self, text, timeout=10.0):
@@ -1411,7 +1441,15 @@ class TTSEngineManager:
             else:
                 return self.piper_instance.synthesize(text)
         elif self.current_engine == "voicevox" and self.voicevox_instance:
-            return self.voicevox_instance.synthesize(text, timeout=10.0)
+            # Use longer timeout for VoiceVox, especially on Linux where it can be slower
+            voicevox_timeout = 20.0 if not IS_WINDOWS else 15.0
+            print(f"[TTS] Starting VoiceVox synthesis with {voicevox_timeout}s timeout")
+            result = self.voicevox_instance.synthesize(text, timeout=voicevox_timeout)
+            if result:
+                print(f"[TTS] VoiceVox synthesis completed successfully ({len(result)} bytes)")
+            else:
+                print(f"[TTS] VoiceVox synthesis failed or returned empty result")
+            return result
         else:
             print(f"[TTS] No active {self.current_engine} engine instance")
             return b''
