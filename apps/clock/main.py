@@ -147,19 +147,11 @@ class App(AppBase):
         if keycode == "KEY_R":
             if self.mode == "timer":
                 self.reset_timer()
-            else:
-                # Reload the app if 'R' is pressed in clock mode
-                self.display_queue.put(("set_screen", "Clock", "Reloading Clock app..."))
-                self.context["app_manager"].reload_app("clock")
         
         elif keycode == "KEY_ESC":
             if self.input_mode:
                 # Cancel timer setting
                 self.input_mode = None
-            else:
-                # Switch to the launcher
-                self.display_queue.put(("set_screen", "Launcher", "Switching to Launcher..."))
-                self.context["app_manager"].swap_app_async("clock", "launcher", update_rate_hz=20.0, delay=0.1)
         
         # Mode switching
         elif keycode == "KEY_T":

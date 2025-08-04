@@ -1,0 +1,7 @@
+{
+  "name": "App Reboot",
+  "description": "Restart ProxiTalk application (scripts only)",
+  "version": "1.0",
+  "type": "app",
+  "author": "ProxiTalk"
+}

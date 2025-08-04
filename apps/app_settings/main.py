@@ -3,7 +3,6 @@ from interfaces import AppBase
 class App(AppBase):
     def __init__(self, context):
         super().__init__(context)
-        self.display_queue = context["display_queue"]
         self.draw = context["drawing"]  # New region-based drawing system
         self.user_prefs = context.get("user_preferences")
         self.selection = 0
