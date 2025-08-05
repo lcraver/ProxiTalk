@@ -1435,7 +1435,7 @@ class PyOpenJTalkPlusTTS:
             print(f"[PyOpenJTalk+] Module test failed: {e}")
             print("[PyOpenJTalk+] Note: pyopenjtalk-plus may have dependency issues on this system")
         
-        # Start persistent process
+        # Start persistent process (try server first, fallback to direct if needed)
         self.start_process()
     
     def start_process(self):
@@ -1643,12 +1643,23 @@ except Exception as e:
             self.reader_thread = threading.Thread(target=self._read_stdout, daemon=True)
             self.reader_thread.start()
             
+            # Start stderr monitoring thread (like Piper)
+            threading.Thread(target=self._monitor_stderr, daemon=True).start()
+            
             # Wait for server ready message (longer timeout for Pi)
             ready = False
             max_wait_iterations = 100 if not IS_WINDOWS else 50  # 10s for Pi, 5s for Windows
             for i in range(max_wait_iterations):
                 if self.process.poll() is not None:
                     print(f"[PyOpenJTalk+] Process died during startup (iteration {i})")
+                    stderr_output = ""
+                    try:
+                        # Try to get some stderr output for debugging
+                        stderr_output = self.process.stderr.read()
+                        if stderr_output:
+                            print(f"[PyOpenJTalk+] Process stderr: {stderr_output[:500]}")
+                    except:
+                        pass
                     break
                 time.sleep(0.1)
                 # Check if we got the ready message in our buffer
@@ -1662,9 +1673,9 @@ except Exception as e:
                 print("[PyOpenJTalk+] Persistent synthesis process started successfully")
             else:
                 print("[PyOpenJTalk+] Warning: Synthesis process may not be ready (Pi needs more time)")
-                # On Pi, still proceed even if not fully ready
+                # On Pi, still proceed even if not fully ready - will use fallback if needed
                 if not IS_WINDOWS:
-                    print("[PyOpenJTalk+] Proceeding anyway on Pi - will retry if needed")
+                    print("[PyOpenJTalk+] Proceeding anyway on Pi - will use fallback if server fails")
                 
         except Exception as e:
             print(f"[PyOpenJTalk+] Failed to start persistent process: {e}")
@@ -1677,39 +1688,38 @@ except Exception as e:
                 if self.process.poll() is not None:
                     break
                     
-                # Windows-compatible non-blocking read
-                if IS_WINDOWS:
-                    try:
-                        # Use readline for line-buffered reading on Windows
-                        line = self.process.stdout.readline()
-                        if line:
-                            self.output_buffer.extend(line.encode('utf-8'))
-                        else:
-                            time.sleep(0.01)  # Small delay if no data
-                    except Exception:
-                        time.sleep(0.1)
-                else:
-                    # Unix systems can use select
-                    try:
-                        import select
-                        ready, _, _ = select.select([self.process.stdout], [], [], 0.1)
-                        if ready:
-                            data = self.process.stdout.read(4096)
-                            if data:
-                                self.output_buffer.extend(data.encode('utf-8'))
-                    except ImportError:
-                        # Fallback if select not available
-                        try:
-                            line = self.process.stdout.readline()
-                            if line:
-                                self.output_buffer.extend(line.encode('utf-8'))
-                            else:
-                                time.sleep(0.01)
-                        except:
-                            time.sleep(0.1)
+                # Use readline for both Windows and Linux for simplicity and reliability
+                try:
+                    line = self.process.stdout.readline()
+                    if line:
+                        self.output_buffer.extend(line.encode('utf-8'))
+                    else:
+                        time.sleep(0.01)  # Small delay if no data
+                except Exception as e:
+                    print(f"[PyOpenJTalk+] Output reader readline error: {e}")
+                    time.sleep(0.1)
                         
             except Exception as e:
                 print(f"[PyOpenJTalk+] Output reader error: {e}")
+                break
+    
+    def _monitor_stderr(self):
+        """Monitor stderr for errors (like Piper)"""
+        while not self._stop_event.is_set() and self.process:
+            try:
+                if self.process.poll() is not None:
+                    break
+                    
+                line = self.process.stderr.readline()
+                if line:
+                    line = line.strip()
+                    if line:  # Only print non-empty lines
+                        print(f"[PyOpenJTalk+] Server stderr: {line}", flush=True)
+                else:
+                    time.sleep(0.1)
+                        
+            except Exception as e:
+                print(f"[PyOpenJTalk+] Stderr monitor error: {e}")
                 break
     
     def _discover_voices(self):
@@ -1824,8 +1834,8 @@ except Exception as e:
         return None
     
     def synthesize(self, text, timeout=12.0):
-        """Synthesize text to audio - use smart direct method for Pi reliability"""
-        import base64
+        """Synthesize text to audio using persistent PyOpenJTalk+ process with fallback"""
+        import json
         import time
         
         with self.lock:
@@ -1833,14 +1843,7 @@ except Exception as e:
                 print("[PyOpenJTalk+] pyopenjtalk-plus not available")
                 return b''
             
-            # For Pi/Linux, prefer direct synthesis for reliability
-            if not IS_WINDOWS:
-                print("[PyOpenJTalk+] Using smart direct synthesis for Pi reliability")
-                voice_path = self.get_voice_path(self.current_voice)
-                return self._synthesize_smart_direct(text, voice_path)
-            
-            # Windows can use the persistent process approach
-            # Check if process is running
+            # Try persistent process first (both Windows and Pi)
             if not self.process or self.process.poll() is not None:
                 print("[PyOpenJTalk+] Process not running, restarting...")
                 self.start_process()
@@ -1877,14 +1880,16 @@ except Exception as e:
                 self.process.stdin.flush()
                 
                 # Wait for response
-                
                 synthesis_start = time.time()
                 start_time = time.time()
                 while time.time() - start_time < timeout:
                     # Check if process died
                     if self.process.poll() is not None:
                         print("[PyOpenJTalk+] Process died during synthesis")
-                        return b''
+                        # Fall back to direct synthesis
+                        print("[PyOpenJTalk+] Using direct synthesis as fallback after process death")
+                        voice_path = self.get_voice_path(self.current_voice)
+                        return self._synthesize_smart_direct(text, voice_path)
                     
                     # Look for response in output buffer
                     buffer_str = self.output_buffer.decode('utf-8', errors='ignore')
@@ -1920,12 +1925,18 @@ except Exception as e:
                                             return audio_bytes
                                         else:
                                             print(f"[PyOpenJTalk+] WAV file not found: {wav_path}")
-                                            return b''
+                                            # Fall back to direct synthesis
+                                            print("[PyOpenJTalk+] Using direct synthesis as fallback after WAV file error")
+                                            voice_path = self.get_voice_path(self.current_voice)
+                                            return self._synthesize_smart_direct(text, voice_path)
                                     else:
                                         error = response_data.get('error', 'Unknown error')
                                         synthesis_time = time.time() - synthesis_start
                                         print(f"[PyOpenJTalk+] Synthesis error after {synthesis_time:.3f}s: {error}")
-                                        return b''
+                                        # Fall back to direct synthesis
+                                        print("[PyOpenJTalk+] Using direct synthesis as fallback after server error")
+                                        voice_path = self.get_voice_path(self.current_voice)
+                                        return self._synthesize_smart_direct(text, voice_path)
                             except json.JSONDecodeError:
                                 continue
                     
@@ -1950,13 +1961,16 @@ except Exception as e:
                 # Try direct synthesis as fallback
                 print("[PyOpenJTalk+] Using direct synthesis as fallback after timeout")
                 voice_path = self.get_voice_path(self.current_voice)
-                return self._synthesize_direct(text, voice_path)
+                return self._synthesize_smart_direct(text, voice_path)
                 
             except Exception as e:
                 synthesis_time = time.time() - synthesis_start
                 print(f"[PyOpenJTalk+] Synthesis error after {synthesis_time:.3f}s: {e}")
                 traceback.print_exc()
-                return b''
+                # Fall back to direct synthesis
+                print("[PyOpenJTalk+] Using direct synthesis as fallback after exception")
+                voice_path = self.get_voice_path(self.current_voice)
+                return self._synthesize_smart_direct(text, voice_path)
     
     def close(self):
         """Cleanup PyOpenJTalk+ resources"""
