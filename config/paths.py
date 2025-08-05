@@ -3,6 +3,7 @@ MODEL_PATH = "/home/dietpi/piper/en_GB-cori-medium.onnx"
 VOICEVOX_BIN = "/home/dietpi/voicevox/run"
 VOICEVOX_HOST = "localhost"
 VOICEVOX_PORT = 50021
+OPENJTALK_HTSVOICE_DIR = "/home/dietpi/open_jtalk/voice"
 CACHE_DIR = "/home/dietpi/piper_cache"
 CONFIG_DIR = "/home/dietpi/config"
 APPS_DIR = "/home/dietpi/apps"

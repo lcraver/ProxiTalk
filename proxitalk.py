@@ -13,7 +13,31 @@ import requests
 import json
 import io
 import wave
+import numpy as np
+import tempfile
+import uuid
+import traceback
 from PIL import Image, ImageDraw, ImageFont
+from utils.japanese import convert_romanji_to_hiragana
+
+# Try to import pyopenjtalk-plus (optional)
+try:
+    import pyopenjtalk
+    # Test if it actually works (Windows pathlib issue)
+    test_result = pyopenjtalk.g2p("test", kana=True)
+    PYOPENJTALK_PLUS_AVAILABLE = True
+    print("[PyOpenJTalk+] pyopenjtalk-plus module available and working")
+except ImportError:
+    PYOPENJTALK_PLUS_AVAILABLE = False
+    print("[PyOpenJTalk+] Module not available, install with: pip install pyopenjtalk-plus")
+except Exception as e:
+    PYOPENJTALK_PLUS_AVAILABLE = False
+    print(f"[PyOpenJTalk+] Module available but not working: {e}")
+    if "pathlib" in str(e).lower() or "windowspath" in str(e).lower():
+        print("[PyOpenJTalk+] Known issue: Windows pathlib compatibility problem")
+        print("[PyOpenJTalk+] Workaround: Try on Linux, or wait for package fix")
+    else:
+        print("[PyOpenJTalk+] This may be due to missing dependencies or other issues")
 
 # --- Constants --- #
 
@@ -24,10 +48,10 @@ I2C_PORT = 1        # I2C port (usually 1 on Raspberry Pi)
 I2C_ADDRESS = 0x3C  # Common I2C address for SSD1306 displays
 
 if IS_WINDOWS:
-    from config.emulator.paths import PIPER_BIN, MODEL_PATH, VOICEVOX_BIN, VOICEVOX_HOST, VOICEVOX_PORT, CACHE_DIR, CONFIG_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH
+    from config.emulator.paths import PIPER_BIN, MODEL_PATH, VOICEVOX_BIN, VOICEVOX_HOST, VOICEVOX_PORT, OPENJTALK_HTSVOICE_DIR, CACHE_DIR, CONFIG_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH
     from config.emulator.paths import FONT_PATH, FONT_SMALL_PATH, OVERLAY_DIR
 else:
-    from config.paths import PIPER_BIN, MODEL_PATH, VOICEVOX_BIN, VOICEVOX_HOST, VOICEVOX_PORT, CACHE_DIR, CONFIG_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH
+    from config.paths import PIPER_BIN, MODEL_PATH, VOICEVOX_BIN, VOICEVOX_HOST, VOICEVOX_PORT, OPENJTALK_HTSVOICE_DIR, CACHE_DIR, CONFIG_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH
     from config.paths import FONT_PATH, FONT_SMALL_PATH, OVERLAY_DIR
     
 # -- Emulator Setup --- #
@@ -147,6 +171,8 @@ if IS_WINDOWS:
         def _run_pygame_loop(self):
             import time  # Import time module for timestamp calculations
             try:
+                # Initialize mixer with 22050 Hz (Piper native) BEFORE pygame.init() to avoid conflicts
+                pygame.mixer.pre_init(frequency=22050, size=-16, channels=1)
                 pygame.init()
                 self.screen = pygame.display.set_mode((self.width * self.scale, self.height * self.scale))
                 pygame.display.set_caption("ProxiTalk Emulated Display")
@@ -154,6 +180,11 @@ if IS_WINDOWS:
                 last_surface = None  # Keep track of the last displayed surface
                 
                 print("[Display] Pygame display initialized successfully")
+                
+                # Verify mixer settings
+                mixer_info = pygame.mixer.get_init()
+                if mixer_info:
+                    print(f"[Display] Pygame mixer: {mixer_info[0]}Hz, {mixer_info[1]}-bit, {mixer_info[2]} channels")
                 
             except Exception as e:
                 print(f"[Error] Failed to initialize pygame display: {e}")
@@ -813,7 +844,12 @@ if IS_WINDOWS:
                         break
                     time.sleep(0.05)
 
-                return bytes(self.output_buffer)
+                raw_audio = bytes(self.output_buffer)
+                
+                # Return raw audio at native 22050 Hz - no resampling needed
+                print(f"[Piper] Audio generated: {len(raw_audio)//2} samples at 22050 Hz")
+                
+                return raw_audio
 
         def close(self):
             self._stop_event.set()
@@ -836,18 +872,70 @@ else:
             self.start_process()
 
         def _drain_stderr(self):
-            for line in iter(self.process.stderr.readline, b''):
-                print("Piper stderr:", line.decode(errors="ignore"), flush=True)
+            try:
+                for line in iter(self.process.stderr.readline, b''):
+                    error_msg = line.decode(errors="ignore").strip()
+                    if error_msg:
+                        print(f"[Piper] stderr: {error_msg}", flush=True)
+            except Exception as e:
+                print(f"[Piper] Error reading stderr: {e}")
+                
+        def _check_dependencies(self):
+            """Check if Piper binary and model files exist and are accessible"""
+            issues = []
+            
+            # Check Piper binary
+            if not os.path.exists(self.piper_path):
+                issues.append(f"Piper binary not found: {self.piper_path}")
+            elif not os.access(self.piper_path, os.X_OK):
+                issues.append(f"Piper binary not executable: {self.piper_path}")
+            
+            # Check model file
+            if not os.path.exists(self.model_path):
+                issues.append(f"Model file not found: {self.model_path}")
+            elif not os.access(self.model_path, os.R_OK):
+                issues.append(f"Model file not readable: {self.model_path}")
+            
+            if issues:
+                print("[Piper] Dependency issues found:")
+                for issue in issues:
+                    print(f"  - {issue}")
+                return False
+            
+            print("[Piper] Dependencies check passed")
+            return True
 
         def start_process(self):
-            self.process = subprocess.Popen(
-                [self.piper_path, "--sentence_silence", "0.1", "--model", self.model_path, "--output-raw"],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                bufsize=0
-            )
-            threading.Thread(target=self._drain_stderr, daemon=True).start()
+            try:
+                print(f"[Piper] Starting process: {self.piper_path}")
+                print(f"[Piper] Model path: {self.model_path}")
+                print(f"[Piper] Model exists: {os.path.exists(self.model_path)}")
+                
+                # Check dependencies first
+                if not self._check_dependencies():
+                    print("[Piper] Dependency check failed, cannot start process", flush=True)
+                    return
+                
+                self.process = subprocess.Popen(
+                    [self.piper_path, "--sentence_silence", "0.1", "--model", self.model_path, "--output-raw"],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    bufsize=0
+                )
+                print(f"[Piper] Process started successfully with PID: {self.process.pid}")
+                threading.Thread(target=self._drain_stderr, daemon=True).start()
+                
+                # Wait a moment and check if process is still alive
+                time.sleep(0.1)
+                if self.process.poll() is not None:
+                    print(f"[Piper] ERROR: Process died immediately with return code: {self.process.poll()}")
+                else:
+                    print("[Piper] Process appears to be running normally")
+                    
+            except Exception as e:
+                print(f"[Piper] Failed to start process: {e}")
+                self.process = None
 
         def update_model_path(self, new_model_path):
             """Update the model path and restart the process if needed"""
@@ -861,37 +949,62 @@ else:
         def synthesize(self, text):
             with self.lock:
                 if not self.process or self.process.poll() is not None:
-                    print("Piper process not running. Restarting.")
+                    print("[Piper] Process not running. Restarting.")
                     self.start_process()
+                    if not self.process:
+                        print("[Piper] Failed to restart process")
+                        return b''
 
                 try:
+                    print(f"[Piper] Sending text to process: '{text[:50]}{'...' if len(text) > 50 else ''}'")
                     self.process.stdin.write(text.encode('utf-8') + b'\n')
                     self.process.stdin.flush()
+                    print("[Piper] Text sent successfully")
                 except Exception as e:
-                    print("Failed to write to Piper:", e)
+                    print(f"[Piper] Failed to write to Piper: {e}")
+                    print(f"[Piper] Process status: {self.process.poll()}")
                     return b''
 
                 output = b''
                 start_time = time.time()
                 max_wait = 6.0
+                print("[Piper] Waiting for audio output...")
 
                 while time.time() - start_time < max_wait:
-                    if self.process.stdout.closed:
+                    # Check if process died
+                    if self.process.poll() is not None:
+                        print(f"[Piper] Process died during synthesis with code: {self.process.poll()}")
                         break
-                    rlist, _, _ = select.select([self.process.stdout], [], [], 0.1)
-                    if rlist:
-                        chunk = self.process.stdout.read(1024)
-                        if not chunk:
-                            break
-                        output += chunk
-                    elif output:
-                        break  # Stop if output has begun but no more is arriving
+                        
+                    if self.process.stdout.closed:
+                        print("[Piper] stdout was closed")
+                        break
+                        
+                    try:
+                        rlist, _, _ = select.select([self.process.stdout], [], [], 0.1)
+                        if rlist:
+                            chunk = self.process.stdout.read(1024)
+                            if not chunk:
+                                print("[Piper] Received empty chunk, breaking")
+                                break
+                            output += chunk
+                            print(f"[Piper] Received {len(chunk)} bytes (total: {len(output)})")
+                        elif output:
+                            print("[Piper] No more data arriving, stopping")
+                            break  # Stop if output has begun but no more is arriving
+                    except Exception as e:
+                        print(f"[Piper] Error during select/read: {e}")
+                        break
 
                 # In synthesize():
                 if not output:
-                    print("Empty audio. Restarting Piper.")
+                    print("[Piper] Empty audio. Restarting Piper.")
                     self.close()
                     self.start_process()
+                    return b''
+
+                # Return raw audio at native 22050 Hz - no resampling needed
+                print(f"[Piper] Audio generated: {len(output)//2} samples at 22050 Hz")
 
                 return output
 
@@ -1224,18 +1337,366 @@ else:
                 except Exception as e:
                     print(f"[VoiceVox] Cleanup error: {e}")
 
+# --- PyOpenJTalk Plus TTS --- #
+
+class PyOpenJTalkPlusTTS:
+    def __init__(self, htsvoice_dir):
+        self.htsvoice_dir = htsvoice_dir
+        self.current_voice = None
+        self.available_voices = []
+        self.lock = threading.Lock()
+        
+        # Check if pyopenjtalk-plus is available
+        if not PYOPENJTALK_PLUS_AVAILABLE:
+            print("[PyOpenJTalk+] Error: pyopenjtalk-plus not available")
+            print("[PyOpenJTalk+] Install with: pip install pyopenjtalk-plus")
+            return
+        
+        self._discover_voices()
+        self._set_default_voice()
+        
+        # Test the module
+        try:
+            # Basic initialization test - ensure string paths
+            result = pyopenjtalk.g2p("テスト", kana=True)
+            print(f"[PyOpenJTalk+] Module test successful: {result}")
+        except Exception as e:
+            print(f"[PyOpenJTalk+] Module test failed: {e}")
+            print("[PyOpenJTalk+] Note: pyopenjtalk-plus may have dependency issues on this system")
+    
+    def _discover_voices(self):
+        """Discover available HTS voice files"""
+        self.available_voices = []
+        
+        if not os.path.exists(self.htsvoice_dir):
+            print(f"[PyOpenJTalk+] HTS voice directory not found: {self.htsvoice_dir}")
+            return
+        
+        try:
+            # Search in subdirectories (male, female, custom)
+            for root, dirs, files in os.walk(self.htsvoice_dir):
+                for file in files:
+                    if file.endswith('.htsvoice'):
+                        full_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(root, self.htsvoice_dir)
+                        
+                        voice_info = {
+                            'filename': file,
+                            'name': file.replace('.htsvoice', ''),
+                            'path': full_path,
+                            'category': rel_path if rel_path != '.' else 'other',
+                            'exists': os.path.isfile(full_path)
+                        }
+                        self.available_voices.append(voice_info)
+            
+            # Sort by category then by name
+            self.available_voices.sort(key=lambda x: (x['category'], x['name']))
+            
+            print(f"[PyOpenJTalk+] Discovered {len(self.available_voices)} voice models:")
+            for voice in self.available_voices:
+                status = " (OK)" if voice['exists'] else " (MISSING)"
+                print(f"  - {voice['category']}/{voice['name']}{status}")
+                
+        except Exception as e:
+            print(f"[PyOpenJTalk+] Error discovering voices: {e}")
+    
+    def _set_default_voice(self):
+        """Set the default voice from preferences or first available"""
+        if not self.available_voices:
+            print("[PyOpenJTalk+] No voices available")
+            return
+        
+        # Try to get voice from user preferences
+        try:
+            from config.user_preferences import user_preferences
+            if user_preferences:
+                preferred_voice = user_preferences.get_pyopenjtalk_voice()
+                if preferred_voice:
+                    for voice in self.available_voices:
+                        if voice['filename'] == preferred_voice and voice['exists']:
+                            self.current_voice = voice['filename']
+                            print(f"[PyOpenJTalk+] Using preferred voice: {voice['name']}")
+                            return
+        except:
+            pass  # Ignore if preferences not available
+        
+        # Fallback to first available voice
+        for voice in self.available_voices:
+            if voice['exists']:
+                self.current_voice = voice['filename']
+                print(f"[PyOpenJTalk+] Using default voice: {voice['name']}")
+                return
+    
+    def get_voice_path(self, voice_filename):
+        """Get the full path for a voice filename"""
+        for voice in self.available_voices:
+            if voice['filename'] == voice_filename:
+                return voice['path']
+        return None
+    
+    def set_voice(self, voice_filename):
+        """Set the current voice"""
+        voice_path = self.get_voice_path(voice_filename)
+        if voice_path and os.path.exists(voice_path):
+            self.current_voice = voice_filename
+            print(f"[PyOpenJTalk+] Voice changed to: {voice_filename}")
+            
+            # Save to preferences
+            try:
+                from config.user_preferences import user_preferences
+                if user_preferences:
+                    user_preferences.set_pyopenjtalk_voice(voice_filename)
+            except:
+                pass  # Ignore if preferences not available
+            return True
+        else:
+            print(f"[PyOpenJTalk+] Voice not found: {voice_filename}")
+            return False
+    
+    def get_available_voices(self):
+        """Get list of available voices"""
+        return self.available_voices
+    
+    def get_current_voice(self):
+        """Get current voice filename"""
+        return self.current_voice
+    
+    def get_current_voice_info(self):
+        """Get detailed info about current voice"""
+        for voice in self.available_voices:
+            if voice['filename'] == self.current_voice:
+                return voice
+        return None
+    
+    def synthesize(self, text, timeout=30.0):
+        """Synthesize text to audio using pyopenjtalk-plus with subprocess isolation for voice switching"""
+        with self.lock:
+            if not PYOPENJTALK_PLUS_AVAILABLE:
+                print("[PyOpenJTalk+] pyopenjtalk-plus not available")
+                return b''
+            
+            voice_path = self.get_voice_path(self.current_voice)
+            if not voice_path or not os.path.exists(voice_path):
+                print(f"[PyOpenJTalk+] Voice file not found: {self.current_voice}")
+                # Use built-in voice if custom voice not available
+                print("[PyOpenJTalk+] Falling back to built-in voice")
+                voice_path = None
+            
+            try:
+                # Auto-convert romanji to hiragana if needed using shared utility
+                print(f"[PyOpenJTalk+] Synthesizing text: '{text}' with voice: {self.current_voice}")
+                converted_text = convert_romanji_to_hiragana(text)
+                print(f"[PyOpenJTalk+] Converted text: '{converted_text}'")
+                
+                print(f"[PyOpenJTalk+] Synthesizing text: '{converted_text}' with voice: {self.current_voice}")
+                
+                # Use subprocess isolation to ensure voice switching works properly
+                # This is necessary because pyopenjtalk caches voice models after initialization
+                audio_bytes = self._synthesize_with_subprocess(converted_text, voice_path, timeout)
+                
+                if audio_bytes:
+                    print(f"[PyOpenJTalk+] Successfully generated {len(audio_bytes)} bytes of audio")
+                    return audio_bytes
+                else:
+                    print("[PyOpenJTalk+] Subprocess synthesis failed, trying fallback")
+                    # Fallback to direct synthesis (may not respect voice switching)
+                    return self._synthesize_direct(converted_text, voice_path)
+                
+            except Exception as e:
+                print(f"[PyOpenJTalk+] Synthesis error: {e}")
+                traceback.print_exc()
+                return b''
+    
+    def _synthesize_with_subprocess(self, text, voice_path, timeout):
+        """Use subprocess to synthesize with proper voice isolation"""
+        import subprocess
+        import tempfile
+        import sys
+        import json
+        
+        # Create the synthesis script content
+        script_content = f'''
+import sys
+import numpy as np
+import traceback
+import json
+
+try:
+    import pyopenjtalk
+    
+    # Set voice before any synthesis
+    voice_path = {repr(str(voice_path) if voice_path else None)}
+    if voice_path:
+        pyopenjtalk.DEFAULT_HTS_VOICE = voice_path.encode('utf-8')
+    
+    # Synthesize
+    text = {repr(text)}
+    audio_array, sample_rate = pyopenjtalk.tts(text, speed=1.0, half_tone=0.0)
+    
+    # Convert to the format expected by pygame
+    if audio_array.dtype != np.float64:
+        audio_array = audio_array.astype(np.float64)
+    
+    # Normalize audio
+    audio_max = np.max(np.abs(audio_array))
+    if audio_max > 1.0:
+        audio_array = audio_array / audio_max
+    
+    # Resample to 22050 Hz to match Piper's native sample rate
+    target_sample_rate = 22050
+    if sample_rate != target_sample_rate:
+        try:
+            from scipy import signal
+            resample_ratio = target_sample_rate / sample_rate
+            new_length = int(len(audio_array) * resample_ratio)
+            audio_array = signal.resample(audio_array, new_length)
+        except ImportError:
+            # Simple resampling fallback
+            resample_ratio = target_sample_rate / sample_rate
+            indices = np.arange(0, len(audio_array), 1/resample_ratio).astype(int)
+            indices = indices[indices < len(audio_array)]
+            audio_array = audio_array[indices]
+    
+    # Convert to int16 for pygame
+    audio_array = np.clip(audio_array * 32767, -32768, 32767).astype(np.int16)
+    
+    # Output results as JSON
+    result = {{
+        "success": True,
+        "audio_bytes": audio_array.tobytes().hex(),
+        "length": len(audio_array),
+        "sample_rate": target_sample_rate
+    }}
+    print("SYNTHESIS_RESULT:" + json.dumps(result))
+    
+except Exception as e:
+    error_result = {{
+        "success": False,
+        "error": str(e),
+        "traceback": traceback.format_exc()
+    }}
+    print("SYNTHESIS_RESULT:" + json.dumps(error_result))
+'''
+        
+        try:
+            # Write script to temporary file
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
+                f.write(script_content)
+                temp_script = f.name
+            
+            # Run subprocess
+            try:
+                result = subprocess.run(
+                    [sys.executable, temp_script],
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout
+                )
+                
+                # Parse output
+                if result.returncode == 0:
+                    # Look for our JSON result in stdout
+                    lines = result.stdout.strip().split('\n')
+                    for line in lines:
+                        if line.startswith('SYNTHESIS_RESULT:'):
+                            result_json = json.loads(line[17:])  # Remove "SYNTHESIS_RESULT:" prefix
+                            
+                            if result_json.get('success'):
+                                # Convert hex back to bytes
+                                audio_bytes = bytes.fromhex(result_json['audio_bytes'])
+                                print(f"[PyOpenJTalk+] Subprocess synthesis successful: {result_json['length']} samples")
+                                return audio_bytes
+                            else:
+                                print(f"[PyOpenJTalk+] Subprocess synthesis failed: {result_json.get('error', 'Unknown error')}")
+                                return b''
+                    
+                    print(f"[PyOpenJTalk+] No valid result found in subprocess output")
+                    print(f"[PyOpenJTalk+] Subprocess stdout: {result.stdout}")
+                    if result.stderr:
+                        print(f"[PyOpenJTalk+] Subprocess stderr: {result.stderr}")
+                else:
+                    print(f"[PyOpenJTalk+] Subprocess failed with return code {result.returncode}")
+                    print(f"[PyOpenJTalk+] Subprocess stderr: {result.stderr}")
+                
+                return b''
+                
+            except subprocess.TimeoutExpired:
+                print(f"[PyOpenJTalk+] Subprocess synthesis timed out after {timeout} seconds")
+                return b''
+            except Exception as e:
+                print(f"[PyOpenJTalk+] Subprocess error: {e}")
+                return b''
+            
+        finally:
+            # Clean up temporary file
+            try:
+                import os
+                os.unlink(temp_script)
+            except:
+                pass
+    
+    def _synthesize_direct(self, text, voice_path):
+        """Direct synthesis fallback (may not respect voice switching properly)"""
+        try:
+            print(f"[PyOpenJTalk+] Using direct synthesis fallback")
+            
+            if voice_path:
+                # Try to set voice (may not work due to caching)
+                original_voice = pyopenjtalk.DEFAULT_HTS_VOICE
+                pyopenjtalk.DEFAULT_HTS_VOICE = str(voice_path).encode('utf-8')
+                try:
+                    audio_array, sample_rate = pyopenjtalk.tts(text, speed=1.0, half_tone=0.0)
+                finally:
+                    pyopenjtalk.DEFAULT_HTS_VOICE = original_voice
+            else:
+                audio_array, sample_rate = pyopenjtalk.tts(text, speed=1.0, half_tone=0.0)
+            
+            # Process audio
+            if audio_array.dtype != np.float64:
+                audio_array = audio_array.astype(np.float64)
+            
+            audio_max = np.max(np.abs(audio_array))
+            if audio_max > 1.0:
+                audio_array = audio_array / audio_max
+            
+            target_sample_rate = 22050
+            if sample_rate != target_sample_rate:
+                try:
+                    from scipy import signal
+                    resample_ratio = target_sample_rate / sample_rate
+                    new_length = int(len(audio_array) * resample_ratio)
+                    audio_array = signal.resample(audio_array, new_length)
+                except ImportError:
+                    resample_ratio = target_sample_rate / sample_rate
+                    indices = np.arange(0, len(audio_array), 1/resample_ratio).astype(int)
+                    indices = indices[indices < len(audio_array)]
+                    audio_array = audio_array[indices]
+            
+            audio_array = np.clip(audio_array * 32767, -32768, 32767).astype(np.int16)
+            return audio_array.tobytes()
+            
+        except Exception as e:
+            print(f"[PyOpenJTalk+] Direct synthesis fallback failed: {e}")
+            return b''
+    
+    def close(self):
+        """Cleanup PyOpenJTalk+ resources"""
+        print("[PyOpenJTalk+] Cleanup completed")
+
 # --- TTS Engine Manager --- #
 
 class TTSEngineManager:
-    def __init__(self, piper_bin, model_path, voicevox_bin, voicevox_host, voicevox_port):
+    def __init__(self, piper_bin, model_path, voicevox_bin, voicevox_host, voicevox_port, openjtalk_htsvoice_dir):
         self.piper_instance = None
         self.voicevox_instance = None
+        self.pyopenjtalk_plus_instance = None
         self.current_engine = "piper"  # Default to Piper
         self.piper_bin = piper_bin
         self.model_path = model_path
         self.voicevox_bin = voicevox_bin
         self.voicevox_host = voicevox_host
         self.voicevox_port = voicevox_port
+        self.openjtalk_htsvoice_dir = openjtalk_htsvoice_dir
         
         # Piper model management
         self.piper_dir = os.path.dirname(model_path) if model_path else ""
@@ -1250,6 +1711,9 @@ class TTSEngineManager:
         
         # Discover available Piper models
         self._discover_piper_models()
+        
+        # Initialize PyOpenJTalk+ 
+        self._init_pyopenjtalk_plus()
         
         # Initialize Piper by default
         self._init_piper()
@@ -1396,9 +1860,20 @@ class TTSEngineManager:
         except Exception as e:
             print(f"[TTS] Failed to initialize VoiceVox: {e}")
     
+    def _init_pyopenjtalk_plus(self):
+        """Initialize PyOpenJTalk+ TTS engine"""
+        try:
+            if self.pyopenjtalk_plus_instance:
+                self.pyopenjtalk_plus_instance.close()
+            
+            self.pyopenjtalk_plus_instance = PyOpenJTalkPlusTTS(self.openjtalk_htsvoice_dir)
+            print("[TTS] PyOpenJTalk+ engine initialized")
+        except Exception as e:
+            print(f"[TTS] Failed to initialize PyOpenJTalk+: {e}")
+    
     def set_engine(self, engine_name):
         """Switch between TTS engines"""
-        if engine_name not in ["piper", "voicevox"]:
+        if engine_name not in ["piper", "voicevox", "openjtalk"]:
             print(f"[TTS] Invalid engine name: {engine_name}")
             return False
         
@@ -1417,6 +1892,10 @@ class TTSEngineManager:
             print("[TTS] Closing VoiceVox instance before switching")
             self.voicevox_instance.close()
             self.voicevox_instance = None
+        elif self.current_engine == "openjtalk" and self.pyopenjtalk_plus_instance:
+            print("[TTS] Closing PyOpenJTalk+ instance before switching")
+            self.pyopenjtalk_plus_instance.close()
+            self.pyopenjtalk_plus_instance = None
         
         # Update current engine
         self.current_engine = engine_name
@@ -1430,6 +1909,9 @@ class TTSEngineManager:
             # Always initialize/reinitialize Piper to ensure it uses the current selected model
             # This handles cases where the model was changed while using a different engine
             self._init_piper()
+        elif engine_name == "openjtalk":
+            print("[TTS] Initializing PyOpenJTalk+ engine")
+            self._init_pyopenjtalk_plus()
         
         return True
     
@@ -1449,6 +1931,14 @@ class TTSEngineManager:
                 print(f"[TTS] VoiceVox synthesis completed successfully ({len(result)} bytes)")
             else:
                 print(f"[TTS] VoiceVox synthesis failed or returned empty result")
+            return result
+        elif self.current_engine == "openjtalk" and self.pyopenjtalk_plus_instance:
+            print(f"[TTS] Starting PyOpenJTalk+ synthesis")
+            result = self.pyopenjtalk_plus_instance.synthesize(text, timeout=10.0)
+            if result:
+                print(f"[TTS] PyOpenJTalk+ synthesis completed successfully ({len(result)} bytes)")
+            else:
+                print(f"[TTS] PyOpenJTalk+ synthesis failed or returned empty result")
             return result
         else:
             print(f"[TTS] No active {self.current_engine} engine instance")
@@ -1552,6 +2042,32 @@ class TTSEngineManager:
         else:
             return "unknown_model"
     
+    def get_pyopenjtalk_plus_voices(self):
+        """Get available PyOpenJTalk+ voices"""
+        if self.pyopenjtalk_plus_instance:
+            return self.pyopenjtalk_plus_instance.get_available_voices()
+        return []
+    
+    def set_pyopenjtalk_plus_voice(self, voice_filename):
+        """Set the current PyOpenJTalk+ voice"""
+        if self.pyopenjtalk_plus_instance:
+            return self.pyopenjtalk_plus_instance.set_voice(voice_filename)
+        else:
+            print("[TTS] PyOpenJTalk+ not initialized")
+            return False
+    
+    def get_current_pyopenjtalk_plus_voice(self):
+        """Get the current PyOpenJTalk+ voice filename"""
+        if self.pyopenjtalk_plus_instance:
+            return self.pyopenjtalk_plus_instance.get_current_voice()
+        return None
+    
+    def get_current_pyopenjtalk_plus_voice_info(self):
+        """Get detailed info about the current PyOpenJTalk+ voice"""
+        if self.pyopenjtalk_plus_instance:
+            return self.pyopenjtalk_plus_instance.get_current_voice_info()
+        return None
+    
     def get_voicevox_speakers(self):
         """Get available VoiceVox speakers (cached) - only if VoiceVox is current engine"""
         # Only provide speaker lists if VoiceVox is the current engine
@@ -1643,6 +2159,8 @@ class TTSEngineManager:
             self.piper_instance.close()
         if self.voicevox_instance:
             self.voicevox_instance.close()
+        if self.pyopenjtalk_plus_instance:
+            self.pyopenjtalk_plus_instance.close()
 
 # --- Display Setup --- #
 
@@ -2254,7 +2772,7 @@ from config.user_preferences import initialize_preferences
 initialize_preferences(CONFIG_DIR)
 
 # Initialize TTS Engine Manager
-tts_manager = TTSEngineManager(PIPER_BIN, MODEL_PATH, VOICEVOX_BIN, VOICEVOX_HOST, VOICEVOX_PORT)
+tts_manager = TTSEngineManager(PIPER_BIN, MODEL_PATH, VOICEVOX_BIN, VOICEVOX_HOST, VOICEVOX_PORT, OPENJTALK_HTSVOICE_DIR)
 atexit.register(lambda: tts_manager.close_all())
 
 def apply_word_map(text, word_map):
@@ -2271,7 +2789,7 @@ def apply_word_map(text, word_map):
 def hash_text(text):
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
-# Initialize Pygame mixer for all platforms
+# Initialize Pygame mixer for all platforms - use 22050 Hz for Piper native playback
 pygame.mixer.init(frequency=22050, size=-16, channels=1)
 
 def wrap_raw_audio_as_wav(raw_bytes, sample_rate=22050):
@@ -2309,7 +2827,7 @@ def play_audio_sync(audio_bytes):
                 proc = subprocess.Popen(["timeout", "5", "aplay", "-"], stdin=subprocess.PIPE)
                 proc.communicate(input=audio_bytes)
             else:
-                # Raw PCM format - specify format parameters
+                # Raw PCM format - specify format parameters for 22050 Hz (Piper native)
                 proc = subprocess.Popen([
                     "timeout", "5",
                     "aplay", "-R", "400", "-r", "22050", "-f", "S16_LE", "-t", "raw", "-"
@@ -2318,12 +2836,17 @@ def play_audio_sync(audio_bytes):
         except Exception as e:
             print(f"[Audio] aplay error: {e}", flush=True)
 
-def run_tts(text, background=False):
+def run_tts(text, background=False, skip_cache=False):
     """
     Generate and play TTS audio with intelligent caching.
     
     Cache keys include TTS engine, VoiceVox speaker ID, and Piper model
     to ensure cached audio matches the current voice/style configuration.
+    
+    Args:
+        text: Text to synthesize
+        background: If True, don't update display during synthesis
+        skip_cache: If True, bypass cache and force fresh synthesis
     """
     if not text.strip():
         return
@@ -2342,11 +2865,17 @@ def run_tts(text, background=False):
         # Use the reliable method that always returns the active model filename
         model_filename = tts_manager.get_active_model_filename()
         engine_suffix += f"_model_{model_filename}"
+    elif tts_manager.get_current_engine() == "openjtalk":
+        # Include PyOpenJTalk+ voice filename to ensure correct voice caching
+        from config.user_preferences import user_preferences
+        voice_filename = user_preferences.get_pyopenjtalk_voice() if user_preferences else "default"
+        engine_suffix += f"_voice_{voice_filename}"
     
     cache_key = hash_text(text + engine_suffix)
     cached_file = os.path.join(CACHE_DIR, cache_key + ".raw")
 
-    if os.path.exists(cached_file):
+    # Check cache only if not skipping cache
+    if not skip_cache and os.path.exists(cached_file):
         with open(cached_file, "rb") as f:
             cached_audio = f.read()
 
@@ -2369,7 +2898,10 @@ def run_tts(text, background=False):
 
     else:
         if not background:
-            display_queue.put(("set_screen", f"Generating ({tts_manager.get_current_engine().title()})", text))
+            if skip_cache:
+                display_queue.put(("set_screen", f"Testing ({tts_manager.get_current_engine().title()})", text))
+            else:
+                display_queue.put(("set_screen", f"Generating ({tts_manager.get_current_engine().title()})", text))
             display_queue.put(("draw_icon", generating_icon, 0, height - 8))
 
         try:
@@ -2662,7 +3194,7 @@ def main():
             "set_engine": lambda engine: tts_manager.set_engine(engine),
             "get_engine": lambda: tts_manager.get_current_engine(),
             "set_voicevox_speaker": lambda speaker_id: tts_manager.set_voicevox_speaker(speaker_id),
-            "get_available_engines": lambda: ["piper", "voicevox"],
+            "get_available_engines": lambda: ["piper", "voicevox", "openjtalk"],
             "get_voicevox_speakers": lambda: tts_manager.get_voicevox_speakers(),
             "get_voicevox_speakers_flat": lambda: tts_manager.get_voicevox_speakers_flat(),
             "refresh_voicevox_speakers": lambda: tts_manager.refresh_voicevox_speakers_cache(),
@@ -2670,6 +3202,10 @@ def main():
             "get_piper_models": lambda: tts_manager.get_piper_models(),
             "set_piper_model": lambda model_path: tts_manager.set_piper_model(model_path),
             "get_current_piper_model": lambda: tts_manager.get_current_piper_model(),
+            # PyOpenJTalk+ voice methods
+            "get_pyopenjtalk_plus_voices": lambda: tts_manager.get_pyopenjtalk_plus_voices(),
+            "set_pyopenjtalk_plus_voice": lambda voice_filename: tts_manager.set_pyopenjtalk_plus_voice(voice_filename),
+            "get_current_pyopenjtalk_plus_voice": lambda: tts_manager.get_current_pyopenjtalk_plus_voice(),
         },
         "fonts": {
             "small": fontSmall,

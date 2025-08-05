@@ -13,7 +13,8 @@
   "disabled_overlays": [
     "mori"
   ],
-  "tts_engine": "voicevox",
+  "tts_engine": "openjtalk",
   "voicevox_speaker_id": 8,
-  "piper_model": "C:\\Users\\Pidge\\Documents\\ProxiTalk\\tts\\piper\\en_GB-cori-medium.onnx"
+  "piper_model": "C:\\Users\\Pidge\\Documents\\ProxiTalk\\tts\\piper\\en_GB-cori-medium.onnx",
+  "pyopenjtalk_voice": "mei_bashful.htsvoice"
 }

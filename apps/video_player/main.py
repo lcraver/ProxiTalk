@@ -429,7 +429,7 @@ class App(AppBase):
                 f"[Video Player] Extracting audio from {start_time:.1f}s to: {self.audio_temp_file}")
 
             # Get current mixer settings
-            mixer_frequency = 22050
+            mixer_frequency = 48000
             mixer_channels = 1
 
             try:
@@ -1132,7 +1132,7 @@ class App(AppBase):
                 f"[Video Player] Extracting audio to: {self.audio_temp_file}")
 
             # Get current mixer settings to match format
-            mixer_frequency = 22050  # Default
+            mixer_frequency = 48000  # Default
             mixer_channels = 1       # Default
 
             try:

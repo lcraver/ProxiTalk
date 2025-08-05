@@ -60,14 +60,45 @@ class App(AppBase):
         self.current_piper_model_index = 0
         self.load_piper_models()
 
+        # Get PyOpenJTalk+ voices on startup
+        self.pyopenjtalk_voices = []
+        self.pyopenjtalk_grouped_voices = []
+        self.current_pyopenjtalk_voice_index = 0
+        self.current_pyopenjtalk_character_index = 0
+        self.current_pyopenjtalk_style_index = 0
+        # Scrolling for PyOpenJTalk+ interface
+        self.pyopenjtalk_character_scroll_offset = 0
+        self.pyopenjtalk_style_scroll_offset = 0
+        # Two-panel navigation for PyOpenJTalk+
+        self.pyopenjtalk_active_panel = "character"  # "character" or "style"
+        self.load_pyopenjtalk_voices()
+
         self.menu_items = ["Engine", "Test"]
         if self.current_engine == "voicevox":
             self.menu_items.insert(1, "Voice")
         elif self.current_engine == "piper":
             self.menu_items.insert(1, "Model")
+        elif self.current_engine == "openjtalk":
+            self.menu_items.insert(1, "Voice")
         self.selected_item = 0
         self.in_submenu = False
         self.submenu_type = None
+
+    def find_current_pyopenjtalk_voice_position(self, current_voice):
+        """Find the character and style indices for current PyOpenJTalk+ voice"""
+        if not current_voice or not self.pyopenjtalk_grouped_voices:
+            return
+        
+        for char_idx, character in enumerate(self.pyopenjtalk_grouped_voices):
+            for style_idx, style in enumerate(character['styles']):
+                if style['filename'] == current_voice:
+                    self.current_pyopenjtalk_character_index = char_idx
+                    self.current_pyopenjtalk_style_index = style_idx
+                    return
+        
+        # If not found, reset to first character and style
+        self.current_pyopenjtalk_character_index = 0
+        self.current_pyopenjtalk_style_index = 0
 
     def find_voice_and_style_for_speaker(self, speaker):
         """Find the voice and style indices for a given speaker"""
@@ -148,6 +179,82 @@ class App(AppBase):
             print(f"[TTS Settings] Failed to load Piper models: {e}")
             self.piper_models = []
 
+    def load_pyopenjtalk_voices(self):
+        """Load available PyOpenJTalk+ voices and group them by character"""
+        try:
+            raw_voices = self.context["tts"]["get_pyopenjtalk_plus_voices"]()
+            current_voice = self.context["tts"]["get_current_pyopenjtalk_plus_voice"]()
+            
+            # Group voices by character name (extract character from filename)
+            self.pyopenjtalk_grouped_voices = []  # List of voice groups
+            self.pyopenjtalk_voices = raw_voices  # Keep original flat list for compatibility
+            self.current_pyopenjtalk_character_index = 0
+            self.current_pyopenjtalk_style_index = 0
+            
+            if raw_voices:
+                print(f"[TTS Settings] Loaded {len(raw_voices)} PyOpenJTalk+ voices")
+                
+                # Group voices by character
+                character_groups = {}
+                for voice in raw_voices:
+                    # Extract character name (everything before the last underscore or dash)
+                    voice_name = voice['name']
+                    
+                    # Handle different naming patterns
+                    if '_' in voice_name:
+                        character = '_'.join(voice_name.split('_')[:-1])
+                        style = voice_name.split('_')[-1]
+                    elif '-' in voice_name:
+                        parts = voice_name.split('-')
+                        if len(parts) >= 2:
+                            character = '-'.join(parts[:-1])
+                            style = parts[-1]
+                        else:
+                            character = voice_name
+                            style = 'default'
+                    else:
+                        character = voice_name
+                        style = 'default'
+                    
+                    if character not in character_groups:
+                        character_groups[character] = {
+                            'name': character,
+                            'styles': []
+                        }
+                    
+                    character_groups[character]['styles'].append({
+                        'name': style,
+                        'filename': voice['filename'],
+                        'path': voice['path'],
+                        'exists': voice['exists']
+                    })
+                
+                # Convert to list and sort
+                self.pyopenjtalk_grouped_voices = list(character_groups.values())
+                self.pyopenjtalk_grouped_voices.sort(key=lambda x: x['name'])
+                
+                # Sort styles within each character group
+                for character in self.pyopenjtalk_grouped_voices:
+                    character['styles'].sort(key=lambda x: x['name'])
+                
+                # Find current voice position in grouped structure
+                self.find_current_pyopenjtalk_voice_position(current_voice)
+                
+                # Debug: print grouped voices
+                for i, character in enumerate(self.pyopenjtalk_grouped_voices):
+                    print(f"[TTS Settings] Character {i}: {character['name']} ({len(character['styles'])} styles)")
+                    for j, style in enumerate(character['styles']):
+                        status = " *" if style['filename'] == current_voice else ""
+                        exists = " (OK)" if style['exists'] else " (MISSING)"
+                        print(f"  Style {j}: {style['name']}{status}{exists}")
+            else:
+                print("[TTS Settings] No PyOpenJTalk+ voices available")
+                self.pyopenjtalk_grouped_voices = []
+        except Exception as e:
+            print(f"[TTS Settings] Failed to load PyOpenJTalk+ voices: {e}")
+            self.pyopenjtalk_voices = []
+            self.pyopenjtalk_grouped_voices = []
+
     def update_menu_items(self):
         """Update menu items based on current engine"""
         self.menu_items = ["Engine", "Test"]
@@ -155,6 +262,8 @@ class App(AppBase):
             self.menu_items.insert(1, "Voice")
         elif self.current_engine == "piper":
             self.menu_items.insert(1, "Model")
+        elif self.current_engine == "openjtalk":
+            self.menu_items.insert(1, "Voice")
         if self.selected_item >= len(self.menu_items):
             self.selected_item = len(self.menu_items) - 1
 
@@ -203,8 +312,18 @@ class App(AppBase):
                 self.context["drawing"]["draw_text"](
                     model_name, width + 3, height + 3, self.context["fonts"]["default"])
 
+        # PyOpenJTalk+ voice info if applicable
+        elif self.current_engine == "openjtalk":
+            current_voice = self.context["tts"]["get_current_pyopenjtalk_plus_voice"]()
+            if current_voice:
+                voice_name = current_voice.replace('.htsvoice', '')
+                voice_width, _ = self.context["drawing"]["draw_text_inverted"](
+                    "Voice", 2, height + 4, self.context["fonts"]["small"])
+                self.context["drawing"]["draw_text"](
+                    voice_name, width + 3, height + 3, self.context["fonts"]["default"])
+
         # Menu items
-        has_info = (self.current_engine == "voicevox" and self.voicevox_speakers) or (self.current_engine == "piper")
+        has_info = (self.current_engine == "voicevox" and self.voicevox_speakers) or (self.current_engine == "piper") or (self.current_engine == "openjtalk")
         start_y = 42 if has_info else 38
         for i, item in enumerate(self.menu_items):
             y = start_y + i * 8
@@ -584,6 +703,188 @@ class App(AppBase):
             else:
                 self.context["drawing"]["draw_text"](
                     "No models found", 2, 18, self.context["fonts"]["small"])
+
+        elif self.submenu_type == "pyopenjtalk_voice":
+            # PyOpenJTalk+ voice selection submenu (VoiceVox-style interface)
+            
+            # Title
+            width, height = self.context["drawing"]["draw_text_inverted"](
+                "Voice", 2, 2, self.context["fonts"]["small"])
+
+            # Use grouped voices if available, otherwise show error
+            if self.pyopenjtalk_grouped_voices:
+                total_characters = len(self.pyopenjtalk_grouped_voices)
+
+                # Calculate scroll boundaries
+                start_index = self.pyopenjtalk_character_scroll_offset
+                end_index = min(
+                    start_index + self.max_display_items, total_characters)
+
+                # Display characters with scrolling (left half)
+                for i in range(start_index, end_index):
+                    display_index = i - start_index
+                    y = height + 6 + display_index * 11
+                    character = self.pyopenjtalk_grouped_voices[i]
+                    prefix = ""
+                    status = "*" if i == self.current_pyopenjtalk_character_index else ""
+
+                    # Truncate character name if it would be too long (half screen = ~64 pixels)
+                    character_name = character['name']
+                    # Estimate character width
+                    max_text_width = 64 - len(prefix) * 6 - len(status) * 6
+
+                    # Check if we need to truncate
+                    full_text = f"{prefix}{character_name}{status}"
+                    text_width, _ = self.context["get_text_size"](
+                        full_text, self.context["fonts"]["default"])
+
+                    if text_width > 55:
+                        # Truncate the character name until it fits
+                        while len(character_name) > 0:
+                            truncated_text = f"{prefix}{character_name}...{status}"
+                            text_width, _ = self.context["get_text_size"](
+                                truncated_text, self.context["fonts"]["default"])
+                            if text_width <= 55:
+                                text = truncated_text
+                                break
+                            character_name = character_name[:-1]
+                        else:
+                            # If even truncated to nothing, use minimal text
+                            text = f"{prefix}...{status}"
+                    else:
+                        text = full_text
+
+                    # Invert text if this is the currently selected character and we're on the character panel
+                    if i == self.current_pyopenjtalk_character_index and self.pyopenjtalk_active_panel == "character":
+                        width, _ = self.context["drawing"]["draw_text_inverted"](
+                            text, 2, y, self.context["fonts"]["default"])
+                    else:
+                        width, _ = self.context["drawing"]["draw_text"](
+                            text, 2, y, self.context["fonts"]["default"])
+
+                # Draw scrollbar on the right side of left panel
+                if total_characters > self.max_display_items:
+                    scrollbar_x = 62
+                    scrollbar_top = height + 6
+                    scrollbar_bottom = height + 4 + \
+                        (self.max_display_items * 11)
+                    scrollbar_height = scrollbar_bottom - scrollbar_top
+
+                    # Draw scrollbar track
+                    self.context["drawing"]["draw_area"](
+                        scrollbar_x+1, scrollbar_top, 1, scrollbar_height, fill=255)
+
+                    # Calculate thumb position and size
+                    thumb_height = max(
+                        3, int((self.max_display_items / total_characters) * scrollbar_height))
+                    thumb_position = int(
+                        (start_index / (total_characters - self.max_display_items)) * (scrollbar_height - thumb_height))
+                    thumb_y = scrollbar_top + thumb_position
+
+                    # Draw scrollbar thumb
+                    self.context["drawing"]["draw_area"](
+                        scrollbar_x, thumb_y, 1, thumb_height, fill=255)
+
+                # Show current character's styles on the right side
+                if (self.current_pyopenjtalk_character_index < len(self.pyopenjtalk_grouped_voices) and 
+                    self.pyopenjtalk_grouped_voices[self.current_pyopenjtalk_character_index]['styles']):
+                    
+                    current_character = self.pyopenjtalk_grouped_voices[self.current_pyopenjtalk_character_index]
+                    
+                    # Style panel title
+                    self.context["drawing"]["draw_text_inverted"](
+                        "Style", 66, 2, self.context["fonts"]["small"])
+
+                    styles = current_character['styles']
+                    total_styles = len(styles)
+
+                    # Calculate scroll boundaries for styles
+                    style_start_index = self.pyopenjtalk_style_scroll_offset
+                    style_end_index = min(
+                        style_start_index + self.max_display_items, total_styles)
+
+                    # Display styles with scrolling (right half)
+                    for i in range(style_start_index, style_end_index):
+                        display_index = i - style_start_index
+                        y = height + 6 + display_index * 11
+                        style = styles[i]
+                        prefix = ""
+
+                        # Check if this style is currently active
+                        current_voice = self.context["tts"]["get_current_pyopenjtalk_plus_voice"]()
+                        status = ""
+                        if current_voice and current_voice == style['filename']:
+                            status = " *"
+
+                        # Truncate style name if it would be too long
+                        style_name = style['name']
+
+                        # Check if we need to truncate
+                        full_text = f"{prefix}{style_name}{status}"
+                        text_width, _ = self.context["get_text_size"](
+                            full_text, self.context["fonts"]["default"])
+
+                        if text_width > 60:
+                            # Truncate the style name until it fits
+                            while len(style_name) > 0:
+                                truncated_text = f"{prefix}{style_name}...{status}"
+                                text_width, _ = self.context["get_text_size"](
+                                    truncated_text, self.context["fonts"]["default"])
+                                if text_width <= 60:
+                                    text = truncated_text
+                                    break
+                                style_name = style_name[:-1]
+                            else:
+                                # If even truncated to nothing, use minimal text
+                                text = f"{prefix}...{status}"
+                        else:
+                            text = full_text
+
+                        # Invert text if this is the currently selected style and we're on the style panel
+                        if i == self.current_pyopenjtalk_style_index and self.pyopenjtalk_active_panel == "style":
+                            self.context["drawing"]["draw_text_inverted"](
+                                text, 66, y, self.context["fonts"]["default"])
+                        else:
+                            self.context["drawing"]["draw_text"](
+                                text, 66, y, self.context["fonts"]["default"])
+
+                    # Draw scrollbar for styles on the right panel
+                    if total_styles > self.max_display_items:
+                        scrollbar_x = 126
+                        scrollbar_top = height + 6
+                        scrollbar_bottom = height + 4 + \
+                            (self.max_display_items * 11)
+                        scrollbar_height = scrollbar_bottom - scrollbar_top
+
+                        # Draw scrollbar track
+                        self.context["drawing"]["draw_area"](
+                            scrollbar_x + 1, scrollbar_top, 1, scrollbar_height, fill=255)
+
+                        # Calculate thumb position and size
+                        thumb_height = max(
+                            3, int((self.max_display_items / total_styles) * scrollbar_height))
+                        thumb_position = int(
+                            (style_start_index / (total_styles - self.max_display_items)) * (scrollbar_height - thumb_height))
+                        thumb_y = scrollbar_top + thumb_position
+
+                        # Draw scrollbar thumb
+                        self.context["drawing"]["draw_area"](
+                            scrollbar_x, thumb_y, 1, thumb_height, fill=255)
+
+                # Show current position for characters
+                position_text = f"{self.current_pyopenjtalk_character_index + 1}/{total_characters}"
+                self.context["drawing"]["draw_text"](
+                    position_text, 1, 59, self.context["fonts"]["small"])
+
+                # Show current position for styles if available
+                if (self.current_pyopenjtalk_character_index < len(self.pyopenjtalk_grouped_voices) and 
+                    self.pyopenjtalk_grouped_voices[self.current_pyopenjtalk_character_index]['styles']):
+                    style_position_text = f"{self.current_pyopenjtalk_style_index + 1}/{len(self.pyopenjtalk_grouped_voices[self.current_pyopenjtalk_character_index]['styles'])}"
+                    self.context["drawing"]["draw_text"](
+                        style_position_text, 66, 59, self.context["fonts"]["small"])
+            else:
+                self.context["drawing"]["draw_text"](
+                    "No voices available", 2, 18, self.context["fonts"]["small"])
         
         self.context["drawing"]["end_batch"]()
 
@@ -617,21 +918,34 @@ class App(AppBase):
                 self.in_submenu = True
                 self.submenu_type = "engine"
             elif selected_menu == "Voice":
-                # Use cached data, optionally refresh if needed
-                if not self.voicevox_voices:
-                    print("[TTS Settings] No cached voices, refreshing...")
-                    self.context["tts"]["refresh_voicevox_speakers"]()
-                    self.load_voicevox_speakers()
-                # Reset scroll offset when entering voice selection
-                self.voice_scroll_offset = 0
-                self.style_scroll_offset = 0
-                self.active_panel = "voice"
-                self.update_voice_scroll()
-                # Set current voice to show styles immediately
-                if self.voicevox_voices and self.current_voice_index < len(self.voicevox_voices):
-                    self.current_voice = self.voicevox_voices[self.current_voice_index]
-                self.in_submenu = True
-                self.submenu_type = "voice"
+                if self.current_engine == "voicevox":
+                    # Use cached data, optionally refresh if needed
+                    if not self.voicevox_voices:
+                        print("[TTS Settings] No cached voices, refreshing...")
+                        self.context["tts"]["refresh_voicevox_speakers"]()
+                        self.load_voicevox_speakers()
+                    # Reset scroll offset when entering voice selection
+                    self.voice_scroll_offset = 0
+                    self.style_scroll_offset = 0
+                    self.active_panel = "voice"
+                    self.update_voice_scroll()
+                    # Set current voice to show styles immediately
+                    if self.voicevox_voices and self.current_voice_index < len(self.voicevox_voices):
+                        self.current_voice = self.voicevox_voices[self.current_voice_index]
+                    self.in_submenu = True
+                    self.submenu_type = "voice"
+                elif self.current_engine == "openjtalk":
+                    # Load PyOpenJTalk+ voices if needed
+                    if not self.pyopenjtalk_grouped_voices:
+                        print("[TTS Settings] Loading PyOpenJTalk+ voices...")
+                        self.load_pyopenjtalk_voices()
+                    # Reset scroll offsets when entering voice selection
+                    self.pyopenjtalk_character_scroll_offset = 0
+                    self.pyopenjtalk_style_scroll_offset = 0
+                    self.pyopenjtalk_active_panel = "character"
+                    self.update_pyopenjtalk_character_scroll()
+                    self.in_submenu = True
+                    self.submenu_type = "pyopenjtalk_voice"
             elif selected_menu == "Model":
                 # Load Piper models if needed
                 if not self.piper_models:
@@ -660,6 +974,42 @@ class App(AppBase):
         max_scroll = max(0, len(self.voicevox_voices) - self.max_display_items)
         self.voice_scroll_offset = max(
             0, min(self.voice_scroll_offset, max_scroll))
+
+    def update_pyopenjtalk_character_scroll(self):
+        """Update PyOpenJTalk+ character scroll offset to keep current selection visible"""
+        if not self.pyopenjtalk_grouped_voices:
+            return
+
+        # Ensure current_pyopenjtalk_character_index is within the visible range
+        if self.current_pyopenjtalk_character_index < self.pyopenjtalk_character_scroll_offset:
+            self.pyopenjtalk_character_scroll_offset = self.current_pyopenjtalk_character_index
+        elif self.current_pyopenjtalk_character_index >= self.pyopenjtalk_character_scroll_offset + self.max_display_items:
+            self.pyopenjtalk_character_scroll_offset = self.current_pyopenjtalk_character_index - self.max_display_items + 1
+
+        # Ensure scroll offset is within bounds
+        max_scroll = max(0, len(self.pyopenjtalk_grouped_voices) - self.max_display_items)
+        self.pyopenjtalk_character_scroll_offset = max(
+            0, min(self.pyopenjtalk_character_scroll_offset, max_scroll))
+
+    def update_pyopenjtalk_style_scroll(self):
+        """Update PyOpenJTalk+ style scroll offset to keep current selection visible"""
+        if (not self.pyopenjtalk_grouped_voices or 
+            self.current_pyopenjtalk_character_index >= len(self.pyopenjtalk_grouped_voices)):
+            return
+
+        current_character = self.pyopenjtalk_grouped_voices[self.current_pyopenjtalk_character_index]
+        styles = current_character['styles']
+        
+        # Ensure current_pyopenjtalk_style_index is within the visible range
+        if self.current_pyopenjtalk_style_index < self.pyopenjtalk_style_scroll_offset:
+            self.pyopenjtalk_style_scroll_offset = self.current_pyopenjtalk_style_index
+        elif self.current_pyopenjtalk_style_index >= self.pyopenjtalk_style_scroll_offset + self.max_display_items:
+            self.pyopenjtalk_style_scroll_offset = self.current_pyopenjtalk_style_index - self.max_display_items + 1
+
+        # Ensure scroll offset is within bounds
+        max_scroll = max(0, len(styles) - self.max_display_items)
+        self.pyopenjtalk_style_scroll_offset = max(
+            0, min(self.pyopenjtalk_style_scroll_offset, max_scroll))
 
     def update_style_scroll(self):
         """Update style scroll offset to keep current selection visible"""
@@ -691,14 +1041,21 @@ class App(AppBase):
                 self.in_submenu = False
                 self.submenu_type = None
                 self.active_panel = "voice"
+                self.pyopenjtalk_active_panel = "character"
         elif key == 'KEY_LEFT' or key == 'KEY_A':
-            # Switch to voice panel when in voice submenu
+            # Switch to voice panel when in voice submenu, or character panel in pyopenjtalk
             if self.submenu_type == "voice":
                 self.active_panel = "voice"
+            elif self.submenu_type == "pyopenjtalk_voice":
+                self.pyopenjtalk_active_panel = "character"
         elif key == 'KEY_RIGHT' or key == 'KEY_D':
-            # Switch to style panel when in voice submenu and styles are available
+            # Switch to style panel when styles are available
             if self.submenu_type == "voice" and self.current_voice and self.current_voice['styles']:
                 self.active_panel = "style"
+            elif (self.submenu_type == "pyopenjtalk_voice" and 
+                  self.current_pyopenjtalk_character_index < len(self.pyopenjtalk_grouped_voices) and
+                  self.pyopenjtalk_grouped_voices[self.current_pyopenjtalk_character_index]['styles']):
+                self.pyopenjtalk_active_panel = "style"
         elif key == 'KEY_UP' or key == 'KEY_W':
             if self.submenu_type == "engine":
                 self.engine_index = (self.engine_index -
@@ -707,6 +1064,24 @@ class App(AppBase):
                 if self.piper_models:
                     self.current_piper_model_index = (
                         self.current_piper_model_index - 1) % len(self.piper_models)
+            elif self.submenu_type == "pyopenjtalk_voice":
+                if self.pyopenjtalk_active_panel == "character" and self.pyopenjtalk_grouped_voices:
+                    old_character_index = self.current_pyopenjtalk_character_index
+                    self.current_pyopenjtalk_character_index = (
+                        self.current_pyopenjtalk_character_index - 1) % len(self.pyopenjtalk_grouped_voices)
+                    self.update_pyopenjtalk_character_scroll()
+                    # Reset style index if character changed
+                    if self.current_pyopenjtalk_character_index != old_character_index:
+                        self.current_pyopenjtalk_style_index = 0
+                        self.pyopenjtalk_style_scroll_offset = 0
+                        self.update_pyopenjtalk_style_scroll()
+                elif (self.pyopenjtalk_active_panel == "style" and 
+                      self.current_pyopenjtalk_character_index < len(self.pyopenjtalk_grouped_voices) and
+                      self.pyopenjtalk_grouped_voices[self.current_pyopenjtalk_character_index]['styles']):
+                    current_character = self.pyopenjtalk_grouped_voices[self.current_pyopenjtalk_character_index]
+                    self.current_pyopenjtalk_style_index = (
+                        self.current_pyopenjtalk_style_index - 1) % len(current_character['styles'])
+                    self.update_pyopenjtalk_style_scroll()
             elif self.submenu_type == "voice":
                 if self.active_panel == "voice" and self.voicevox_voices:
                     old_voice_index = self.current_voice_index
@@ -736,6 +1111,24 @@ class App(AppBase):
                 if self.piper_models:
                     self.current_piper_model_index = (
                         self.current_piper_model_index + 1) % len(self.piper_models)
+            elif self.submenu_type == "pyopenjtalk_voice":
+                if self.pyopenjtalk_active_panel == "character" and self.pyopenjtalk_grouped_voices:
+                    old_character_index = self.current_pyopenjtalk_character_index
+                    self.current_pyopenjtalk_character_index = (
+                        self.current_pyopenjtalk_character_index + 1) % len(self.pyopenjtalk_grouped_voices)
+                    self.update_pyopenjtalk_character_scroll()
+                    # Reset style index if character changed
+                    if self.current_pyopenjtalk_character_index != old_character_index:
+                        self.current_pyopenjtalk_style_index = 0
+                        self.pyopenjtalk_style_scroll_offset = 0
+                        self.update_pyopenjtalk_style_scroll()
+                elif (self.pyopenjtalk_active_panel == "style" and 
+                      self.current_pyopenjtalk_character_index < len(self.pyopenjtalk_grouped_voices) and
+                      self.pyopenjtalk_grouped_voices[self.current_pyopenjtalk_character_index]['styles']):
+                    current_character = self.pyopenjtalk_grouped_voices[self.current_pyopenjtalk_character_index]
+                    self.current_pyopenjtalk_style_index = (
+                        self.current_pyopenjtalk_style_index + 1) % len(current_character['styles'])
+                    self.update_pyopenjtalk_style_scroll()
             elif self.submenu_type == "voice":
                 if self.active_panel == "voice" and self.voicevox_voices:
                     old_voice_index = self.current_voice_index
@@ -780,6 +1173,9 @@ class App(AppBase):
                         elif new_engine == "piper":
                             # Load Piper models
                             self.load_piper_models()
+                        elif new_engine == "openjtalk":
+                            # Load PyOpenJTalk+ voices
+                            self.load_pyopenjtalk_voices()
 
                         # Update menu items
                         self.update_menu_items()
@@ -791,6 +1187,7 @@ class App(AppBase):
                 self.in_submenu = False
                 self.submenu_type = None
                 self.active_panel = "voice"
+                self.pyopenjtalk_active_panel = "character"
             elif self.submenu_type == "model":
                 # Apply selected Piper model
                 if self.piper_models and self.current_piper_model_index < len(self.piper_models):
@@ -814,6 +1211,38 @@ class App(AppBase):
                 # Exit submenu
                 self.in_submenu = False
                 self.submenu_type = None
+            elif self.submenu_type == "pyopenjtalk_voice":
+                if self.pyopenjtalk_active_panel == "style" and self.pyopenjtalk_grouped_voices:
+                    # Apply the selected style when ENTER is pressed on style panel
+                    current_character = self.pyopenjtalk_grouped_voices[self.current_pyopenjtalk_character_index]
+                    if self.current_pyopenjtalk_style_index < len(current_character['styles']):
+                        selected_style = current_character['styles'][self.current_pyopenjtalk_style_index]
+                        
+                        if selected_style['exists']:
+                            if self.context["tts"]["set_pyopenjtalk_plus_voice"](selected_style['filename']):
+                                print(f"[TTS Settings] Changed PyOpenJTalk+ voice to: {current_character['name']} ({selected_style['name']})")
+                                # Refresh the voice list to update current voice status
+                                self.load_pyopenjtalk_voices()
+                                # Save preferences
+                                try:
+                                    self.context["user_preferences"].set_pyopenjtalk_voice(selected_style['filename'])
+                                    print(f"[TTS Settings] Saved PyOpenJTalk+ voice preference: {selected_style['name']}")
+                                except Exception as e:
+                                    print(f"[TTS Settings] Warning: Failed to save voice preference: {e}")
+                            else:
+                                print(f"[TTS Settings] Failed to change PyOpenJTalk+ voice to: {selected_style['name']}")
+                        else:
+                            print(f"[TTS Settings] Voice file not found: {selected_style['filename']}")
+
+                    # Exit submenu completely
+                    self.in_submenu = False
+                    self.submenu_type = None
+                    self.pyopenjtalk_active_panel = "character"
+                elif self.pyopenjtalk_active_panel == "character":
+                    # When ENTER is pressed on character panel, switch to style panel
+                    if (self.current_pyopenjtalk_character_index < len(self.pyopenjtalk_grouped_voices) and
+                        self.pyopenjtalk_grouped_voices[self.current_pyopenjtalk_character_index]['styles']):
+                        self.pyopenjtalk_active_panel = "style"
             elif self.submenu_type == "voice":
                 if self.active_panel == "style" and self.current_voice and self.current_voice['styles']:
                     # Apply the selected style when ENTER is pressed on style panel
@@ -875,12 +1304,12 @@ class App(AppBase):
 
     def test_tts(self):
         """Test the current TTS engine"""
-        test_text = f"This is a test."
-
-        if self.current_engine == "voicevox":
+        if self.current_engine == "voicevox" or self.current_engine == "openjtalk":
             test_text = "これはテストです。"
+        else:
+            test_text = "This is a test."
 
-        self.context["tts"]["run"](test_text, background=True)
+        self.context["tts"]["run"](test_text, background=True, skip_cache=True)
 
     def start(self):
         """Start the app"""

@@ -6,17 +6,23 @@ import threading
 import time
 import queue
 from config.keymap import key_map, shift_key_map
+from utils.japanese import detect_and_convert_romanji
 
 class App(AppBase):
     def __init__(self, context):
         super().__init__(context)
         self.draw = context["drawing"]  # New region-based drawing system
+        self.current_engine = context["tts"]["get_engine"]
         self.context = context
         self.words = self.load_autocomplete_words(context["AUTOCOMPLETE_PATH"])
         self.autocomplete_words = self.load_autocomplete_words(context["AUTOCOMPLETE_PATH"])
         self.autocomplete_words.sort()
         self.currentline = ""
         self.current_suggestion = ""
+        
+        # Japanese romanji preview state
+        self.romanji_preview = None
+        self.is_japanese_detected = False
         
         # UI constants
         self.width = context["screen_width"] 
@@ -134,7 +140,8 @@ class App(AppBase):
         self.draw_cursor(self.cursor_x, self.cursor_y)
 
     def draw_help_text(self, content_y, wrapped_lines, font_small, line_height, has_suggestion, suggestion_y=None):
-        """Draw help text at the bottom of the screen"""
+        """Draw help text at the bottom of the screen, with romanji preview if applicable"""
+        # Calculate the base help position
         if has_suggestion:
             help_text = "ALT: Accept  ENTER: Speak"
             help_y = max(content_y + len(wrapped_lines) * line_height + 8, suggestion_y + 8)
@@ -142,10 +149,30 @@ class App(AppBase):
             help_text = "ENTER: Speak"
             help_y = content_y + len(wrapped_lines) * line_height + 8
         
-        if help_y + line_height <= self.height - 2:
+        # Check if we have Japanese romanji preview to show
+        romanji_y = help_y
+        if self.is_japanese_detected and self.romanji_preview and self.current_engine == "openjtalk":
+            # Show romanji preview above help text using default font
+            preview_text = f"JP: {self.romanji_preview}"
+            font_default = self.context["fonts"]["default"]  # Use default font for Japanese text
+            
+            # Check if preview fits on screen
+            if help_y + line_height + 8 <= self.height - 2:
+                # Calculate centered position for preview using default font
+                preview_width = self.context["get_text_size"](preview_text, font_default)[0]
+                preview_x = (self.width - preview_width) // 2
+                
+                # Draw text on background using default font
+                _, height = self.draw["draw_text_inverted"](preview_text, preview_x, help_y, font_default)
+                
+                # Move help text down
+                romanji_y = help_y + height + 4
+
+        # Draw main help text
+        if romanji_y + line_height <= self.height - 2:
             help_width = self.context["get_text_size"](help_text, font_small)[0]
             help_x = (self.width - help_width) // 2
-            self.draw["draw_text"](help_text, help_x, help_y, font_small, 255)
+            self.draw["draw_text"](help_text, help_x, romanji_y, font_small, 255)
 
     def draw_tts_status_icon(self):
         """Draw TTS status icon in bottom right corner"""
@@ -438,9 +465,24 @@ class App(AppBase):
             
         return lines if lines else [""]
 
+    def update_romanji_preview(self):
+        """Update the Japanese romanji preview if applicable"""
+        if self.currentline:
+            converted_text, is_japanese = detect_and_convert_romanji(self.currentline)
+            if is_japanese and converted_text:
+                self.romanji_preview = converted_text
+                self.is_japanese_detected = True
+            else:
+                self.romanji_preview = None
+                self.is_japanese_detected = False
+        else:
+            self.romanji_preview = None
+            self.is_japanese_detected = False
+
     def update_input_display(self):
         """Update the input display with current text and suggestion"""
         self.current_suggestion = self.get_autocomplete_suggestion(self.currentline)
+        self.update_romanji_preview()  # Update Japanese preview
         self.draw_interface("Input", "")
 
     def start(self):
@@ -449,6 +491,10 @@ class App(AppBase):
         self.current_suggestion = ""
         self.cursor_visible = True
         self.cursor_blink_timer = time.time()
+        
+        # Initialize romanji preview state
+        self.romanji_preview = None
+        self.is_japanese_detected = False
         
         self.draw_interface("Ready", "Start typing to see suggestions. Press [ESC] to return to launcher.")
 
@@ -491,7 +537,7 @@ class App(AppBase):
                 self.draw_interface("Ready", "Start typing to see suggestions. Press [ESC] to return to launcher.")
 
     
-    def onkeyup(self, keycode):
+    def onkeydown(self, keycode):
         if keycode == 'KEY_ESC':
             self.draw_interface("Launcher", "Switching to Launcher...")
             self.context["app_manager"].swap_app_async("proxi", "launcher", update_rate_hz=20.0, delay=0.1)

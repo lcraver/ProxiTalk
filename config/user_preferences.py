@@ -33,9 +33,10 @@ class UserPreferences:
             "hidden_apps": [],
             "pinned_apps": [],
             "disabled_overlays": [],
-            "tts_engine": "piper",  # Default TTS engine: "piper" or "voicevox"
+            "tts_engine": "piper",  # Default TTS engine: "piper", "voicevox", or "openjtalk"
             "voicevox_speaker_id": 2,  # Default VoiceVox speaker ID
             "piper_model": None,  # Default Piper model path
+            "pyopenjtalk_voice": None,  # Default PyOpenJTalk+ voice filename
         }
     
     def _save_preferences(self) -> bool:
@@ -184,8 +185,8 @@ class UserPreferences:
         return self._preferences.get("tts_engine", "piper")
     
     def set_tts_engine(self, engine: str) -> bool:
-        """Set the TTS engine preference (piper or voicevox)"""
-        if engine not in ["piper", "voicevox"]:
+        """Set the TTS engine preference (piper, voicevox, or pyopenjtalk-plus)"""
+        if engine not in ["piper", "voicevox", "openjtalk"]:
             print(f"[Preferences] Invalid TTS engine: {engine}")
             return False
         self._preferences["tts_engine"] = engine
@@ -207,6 +208,15 @@ class UserPreferences:
     def set_piper_model(self, model_path: str) -> bool:
         """Set the Piper model path"""
         self._preferences["piper_model"] = model_path
+        return self._save_preferences()
+    
+    def get_pyopenjtalk_voice(self) -> Optional[str]:
+        """Get the PyOpenJTalk+ voice filename"""
+        return self._preferences.get("pyopenjtalk_voice")
+    
+    def set_pyopenjtalk_voice(self, voice_filename: str) -> bool:
+        """Set the PyOpenJTalk+ voice filename"""
+        self._preferences["pyopenjtalk_voice"] = voice_filename
         return self._save_preferences()
 
 # Global instance - will be initialized by main app
