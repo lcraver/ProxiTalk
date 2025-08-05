@@ -476,7 +476,13 @@ def play_sfx_internal(path: str):
             while channel.get_busy():
                 pygame.time.wait(10)
         else:
-            subprocess.call(["aplay", path])
+            # Use timeout for sound effects too to prevent hanging
+            proc = subprocess.Popen(["timeout", "10", "aplay", path], 
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            stdout, stderr = proc.communicate()
+            
+            if proc.returncode != 0 and proc.returncode != 124:  # 124 is timeout exit code
+                print(f"[Audio] aplay failed for SFX '{path}' with return code {proc.returncode}: {stderr.decode()}", flush=True)
     except Exception as e:
         print(f"[Audio] Error playing wav file '{path}': {e}", flush=True)
         
@@ -3365,18 +3371,44 @@ def play_audio_sync(audio_bytes):
             print(f"[Audio] Pygame playback error: {e}", flush=True)
     else:
         try:
-            # Check if audio is already in WAV format
+            # Estimate audio length to set appropriate timeout
             if audio_bytes.startswith(b'RIFF'):
-                # WAV format - use aplay directly
-                proc = subprocess.Popen(["timeout", "5", "aplay", "-"], stdin=subprocess.PIPE)
-                proc.communicate(input=audio_bytes)
+                # WAV format - try to extract duration from header, fallback to length estimation
+                try:
+                    import wave
+                    wav_buf = io.BytesIO(audio_bytes)
+                    with wave.open(wav_buf, 'rb') as wav_file:
+                        frames = wav_file.getnframes()
+                        framerate = wav_file.getframerate()
+                        duration = frames / framerate
+                        timeout = max(10, int(duration + 5))  # At least 10 seconds, plus 5 second buffer
+                except:
+                    # Fallback to size-based estimation for WAV
+                    estimated_duration = len(audio_bytes) / (48000 * 2)  # Assume 48kHz 16-bit
+                    timeout = max(10, int(estimated_duration + 5))
+                
+                print(f"[Audio] Playing WAV audio with {timeout}s timeout", flush=True)
+                proc = subprocess.Popen(["timeout", str(timeout), "aplay", "-"], stdin=subprocess.PIPE, 
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                stdout, stderr = proc.communicate(input=audio_bytes)
+                
+                if proc.returncode != 0 and proc.returncode != 124:  # 124 is timeout exit code
+                    print(f"[Audio] aplay failed with return code {proc.returncode}: {stderr.decode()}", flush=True)
             else:
-                # Raw PCM format - specify format parameters for 22050 Hz (Piper native)
+                # Raw PCM format - calculate duration more accurately
+                estimated_duration = len(audio_bytes) / (22050 * 2)  # 22050 Hz, 16-bit
+                timeout = max(10, int(estimated_duration + 5))  # At least 10 seconds, plus 5 second buffer
+                
+                print(f"[Audio] Playing PCM audio ({estimated_duration:.1f}s) with {timeout}s timeout", flush=True)
                 proc = subprocess.Popen([
-                    "timeout", "5",
+                    "timeout", str(timeout),
                     "aplay", "-R", "400", "-r", "22050", "-f", "S16_LE", "-t", "raw", "-"
-                ], stdin=subprocess.PIPE)
-                proc.communicate(input=audio_bytes)
+                ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                stdout, stderr = proc.communicate(input=audio_bytes)
+                
+                if proc.returncode != 0 and proc.returncode != 124:  # 124 is timeout exit code
+                    print(f"[Audio] aplay failed with return code {proc.returncode}: {stderr.decode()}", flush=True)
+                    
         except Exception as e:
             print(f"[Audio] aplay error: {e}", flush=True)
 

@@ -9,6 +9,9 @@ class App(AppBase):
         self.current_time = time.strftime("%H:%M:%S", time.localtime())
         self.play_sfx = context["audio"]["play_sfx"]
         self.path = context["app_path"]
+        # Ensure path ends with separator for file access
+        if not self.path.endswith(("/", "\\")):
+            self.path += "/"
         self.width = context["screen_width"]
         self.height = context["screen_height"]
         
@@ -51,13 +54,20 @@ class App(AppBase):
         
         # Draw mode indicator
         small_font = self.context["fonts"]["small"]
-        self.drawing["draw_text"]("CLOCK - Press T for Timer", 4, 4, small_font)
+        self.drawing["draw_text"]("CLOCK - T:Timer | Enter:Speak | Esc:Exit", 4, 4, small_font)
         
-        self.play_sfx(self.path + "tick.wav")
+        # Play tick sound with error handling
+        try:
+            self.play_sfx(self.path + "tick.wav")
+        except Exception as e:
+            print(f"[Clock] Error playing tick sound: {e}")
         
         # Play chime every minute
         if self.current_time.endswith(":00"):
-            self.play_sfx(self.path + "chime.wav")
+            try:
+                self.play_sfx(self.path + "chime.wav")
+            except Exception as e:
+                print(f"[Clock] Error playing chime sound: {e}")
     
     def update_timer(self):
         """Update the timer display"""
@@ -67,7 +77,10 @@ class App(AppBase):
             if self.timer_remaining == 0:
                 self.timer_finished = True
                 self.timer_running = False
-                self.play_sfx(self.path + "chime.wav")
+                try:
+                    self.play_sfx(self.path + "chime.wav")
+                except Exception as e:
+                    print(f"[Clock] Error playing timer chime: {e}")
                 self.context["tts"]["run"]("Timer finished!", background=True)
                 
         # Use batching for better performance when drawing multiple text elements
@@ -114,17 +127,19 @@ class App(AppBase):
                 "Up/Down: Change value",
                 "Enter: Confirm",
                 "Tab: Switch field",
-                "Esc: Cancel"
+                "Esc: Cancel & back to timer"
             ]
         elif self.timer_finished:
             instructions = [
                 "R: Reset Timer",
-                "C: Switch to Clock"
+                "C: Switch to Clock",
+                "Esc: Exit to Launcher"
             ]
         else:
             instructions = [
                 "Space: Start/Pause | R: Reset",
-                "S: Set Timer | C: Switch to Clock"
+                "S: Set Timer | C: Switch to Clock",
+                "Esc: Exit to Launcher"
             ]
         
         # Draw each instruction line with proper spacing (convert to integers)
@@ -139,19 +154,33 @@ class App(AppBase):
         
         # Play tick sound for running timer
         if self.timer_running and self.timer_remaining > 0:
-            self.play_sfx(self.path + "tick.wav")
+            try:
+                self.play_sfx(self.path + "tick.wav")
+            except Exception as e:
+                print(f"[Clock] Error playing timer tick: {e}")
         
             
     def onkeyup(self, keycode):
+        # Handle escape key first - always allow backing out
+        if keycode == "KEY_ESC":
+            if self.input_mode:
+                # Cancel timer setting
+                self.input_mode = None
+                return
+            elif self.mode == "timer":
+                # Switch back to clock mode
+                self.switch_to_clock()
+                return
+            else:
+                # Already in clock mode - exit to launcher
+                self.context["app_manager"].swap_app_async(
+                    "clock", "launcher", update_rate_hz=20.0, delay=0.1)
+                return
+        
         # Common keys for both modes
         if keycode == "KEY_R":
             if self.mode == "timer":
                 self.reset_timer()
-        
-        elif keycode == "KEY_ESC":
-            if self.input_mode:
-                # Cancel timer setting
-                self.input_mode = None
         
         # Mode switching
         elif keycode == "KEY_T":
@@ -176,6 +205,7 @@ class App(AppBase):
     
     def handle_timer_input(self, keycode):
         """Handle input when setting timer duration"""
+        # Note: Escape key is handled in onkeyup before this method is called
         if keycode == "KEY_ENTER":
             # Confirm timer setting
             self.timer_remaining = self.timer_minutes * 60 + self.timer_seconds
