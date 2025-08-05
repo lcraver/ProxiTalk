@@ -2296,13 +2296,18 @@ class TTSEngineManager:
             if not model_to_use or not os.path.exists(model_to_use):
                 raise FileNotFoundError(f"Piper model file not found: {model_to_use}")
             
-            # If we already have a Piper instance, just update its model path
+            # Close any existing instance first to ensure clean initialization
             if self.piper_instance:
-                print("[TTS] Updating existing Piper instance with new model...")
-                self.piper_instance.update_model_path(model_to_use)
-            else:
-                print("[TTS] Creating new Piper instance...")
-                self.piper_instance = PersistentPiper(self.piper_bin, model_to_use)
+                print("[TTS] Closing existing Piper instance before reinitializing...")
+                try:
+                    self.piper_instance.close()
+                except Exception as close_error:
+                    print(f"[TTS] Warning: Error closing existing Piper instance: {close_error}")
+                self.piper_instance = None
+            
+            # Always create a fresh instance for reliable initialization
+            print("[TTS] Creating new Piper instance...")
+            self.piper_instance = PersistentPiper(self.piper_bin, model_to_use)
             
             print(f"[TTS] Piper engine successfully initialized with model: {os.path.basename(model_to_use)}")
         except Exception as e:
@@ -2356,34 +2361,61 @@ class TTSEngineManager:
         # Close the current engine before switching to ensure only one runs at a time
         if self.current_engine == "piper" and self.piper_instance:
             print("[TTS] Closing Piper instance before switching")
-            self.piper_instance.close()
+            try:
+                self.piper_instance.close()
+            except Exception as e:
+                print(f"[TTS] Warning: Error closing Piper instance: {e}")
             self.piper_instance = None
         elif self.current_engine == "voicevox" and self.voicevox_instance:
             print("[TTS] Closing VoiceVox instance before switching")
-            self.voicevox_instance.close()
+            try:
+                self.voicevox_instance.close()
+            except Exception as e:
+                print(f"[TTS] Warning: Error closing VoiceVox instance: {e}")
             self.voicevox_instance = None
         elif self.current_engine == "openjtalk" and self.pyopenjtalk_plus_instance:
             print("[TTS] Closing PyOpenJTalk+ instance before switching")
-            self.pyopenjtalk_plus_instance.close()
+            try:
+                self.pyopenjtalk_plus_instance.close()
+            except Exception as e:
+                print(f"[TTS] Warning: Error closing PyOpenJTalk+ instance: {e}")
             self.pyopenjtalk_plus_instance = None
         
+        # Small delay to ensure processes are fully cleaned up
+        time.sleep(0.2)
+        
         # Update current engine
+        old_engine = self.current_engine
         self.current_engine = engine_name
         
-        # Initialize the new engine
-        if engine_name == "voicevox":
-            print("[TTS] Initializing VoiceVox engine")
-            self._init_voicevox()
-        elif engine_name == "piper":
-            print("[TTS] Initializing Piper engine with current model")
-            # Always initialize/reinitialize Piper to ensure it uses the current selected model
-            # This handles cases where the model was changed while using a different engine
-            self._init_piper()
-        elif engine_name == "openjtalk":
-            print("[TTS] Initializing PyOpenJTalk+ engine")
-            self._init_pyopenjtalk_plus()
+        # Initialize the new engine with error handling
+        success = False
+        try:
+            if engine_name == "voicevox":
+                print("[TTS] Initializing VoiceVox engine")
+                self._init_voicevox()
+                success = self.voicevox_instance is not None
+            elif engine_name == "piper":
+                print("[TTS] Initializing Piper engine with current model")
+                # Always initialize/reinitialize Piper to ensure it uses the current selected model
+                # This handles cases where the model was changed while using a different engine
+                self._init_piper()
+                success = self.piper_instance is not None
+            elif engine_name == "openjtalk":
+                print("[TTS] Initializing PyOpenJTalk+ engine")
+                self._init_pyopenjtalk_plus()
+                success = self.pyopenjtalk_plus_instance is not None
+        except Exception as e:
+            print(f"[TTS] Failed to initialize {engine_name} engine: {e}")
+            success = False
         
-        return True
+        if success:
+            print(f"[TTS] Successfully switched to {engine_name} engine")
+            return True
+        else:
+            print(f"[TTS] Failed to switch to {engine_name} engine, reverting to {old_engine}")
+            self.current_engine = old_engine
+            return False
     
     def synthesize(self, text, background=False):
         """Synthesize text using the current engine"""
@@ -2397,22 +2429,49 @@ class TTSEngineManager:
         # Start timing for overall synthesis
         synthesis_start = time.time()
         
-        if self.current_engine == "piper" and self.piper_instance:
-            print(f"[TTS] Starting Piper synthesis...")
-            if IS_WINDOWS:
-                result = self.piper_instance.synthesize(text, timeout=5.0)
+        # Check if current engine instance exists, try to reinitialize if not
+        if self.current_engine == "piper":
+            if not self.piper_instance:
+                print(f"[TTS] Piper instance not found, attempting to reinitialize...")
+                self._init_piper()
+            
+            if self.piper_instance:
+                print(f"[TTS] Starting Piper synthesis...")
+                if IS_WINDOWS:
+                    result = self.piper_instance.synthesize(text, timeout=5.0)
+                else:
+                    result = self.piper_instance.synthesize(text)
             else:
-                result = self.piper_instance.synthesize(text)
-        elif self.current_engine == "voicevox" and self.voicevox_instance:
-            # Use longer timeout for VoiceVox, especially on Linux where it can be slower
-            voicevox_timeout = 20.0 if not IS_WINDOWS else 15.0
-            print(f"[TTS] Starting VoiceVox synthesis with {voicevox_timeout}s timeout")
-            result = self.voicevox_instance.synthesize(text, timeout=voicevox_timeout)
-        elif self.current_engine == "openjtalk" and self.pyopenjtalk_plus_instance:
-            print(f"[TTS] Starting PyOpenJTalk+ synthesis")
-            result = self.pyopenjtalk_plus_instance.synthesize(text, timeout=10.0)
+                print(f"[TTS] Failed to initialize Piper instance")
+                return b''
+                
+        elif self.current_engine == "voicevox":
+            if not self.voicevox_instance:
+                print(f"[TTS] VoiceVox instance not found, attempting to reinitialize...")
+                self._init_voicevox()
+            
+            if self.voicevox_instance:
+                # Use longer timeout for VoiceVox, especially on Linux where it can be slower
+                voicevox_timeout = 20.0 if not IS_WINDOWS else 15.0
+                print(f"[TTS] Starting VoiceVox synthesis with {voicevox_timeout}s timeout")
+                result = self.voicevox_instance.synthesize(text, timeout=voicevox_timeout)
+            else:
+                print(f"[TTS] Failed to initialize VoiceVox instance")
+                return b''
+                
+        elif self.current_engine == "openjtalk":
+            if not self.pyopenjtalk_plus_instance:
+                print(f"[TTS] PyOpenJTalk+ instance not found, attempting to reinitialize...")
+                self._init_pyopenjtalk_plus()
+            
+            if self.pyopenjtalk_plus_instance:
+                print(f"[TTS] Starting PyOpenJTalk+ synthesis")
+                result = self.pyopenjtalk_plus_instance.synthesize(text, timeout=10.0)
+            else:
+                print(f"[TTS] Failed to initialize PyOpenJTalk+ instance")
+                return b''
         else:
-            print(f"[TTS] No active {self.current_engine} engine instance")
+            print(f"[TTS] Unknown engine: {self.current_engine}")
             return b''
         
         # Calculate and display timing
@@ -3784,6 +3843,19 @@ def main():
 
     # Update context to include app_manager for other apps to use
     context["app_manager"] = app_manager
+
+    # Play startup voice saying "プロキトク"
+    startup_voice_path = os.path.join(os.path.dirname(__file__), "startup.wav")
+    
+    # Prefer the Japanese voice, fallback to melody
+    if os.path.exists(startup_voice_path):
+        print("[Main] Playing startup sfx: プロキトク...")
+        try:
+            play_sfx(startup_voice_path)
+        except Exception as e:
+            print(f"[Main] Failed to play startup sfx: {e}")
+    else:
+        print(f"[Main] No startup audio found")
 
     try:
         while True:
