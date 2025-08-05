@@ -1455,70 +1455,159 @@ import sys
 import json
 import numpy as np
 import traceback
-import base64
+import tempfile
+import wave
+import os
+import signal
+import time
+import threading
+
+# Timeout handler for synthesis
+class SynthesisTimeout(Exception):
+    pass
+
+def timeout_handler(signum, frame):
+    raise SynthesisTimeout("Synthesis timed out")
+
+def synthesis_with_timeout(text, voice_path, timeout_seconds=15):
+    """Run synthesis with timeout protection - reduced for Pi"""
+    result = [None, None, None]  # [audio_array, sample_rate, error]
+    
+    def synthesis_worker():
+        try:
+            print(f"Worker: Starting synthesis...", flush=True)
+            audio_array, sample_rate = pyopenjtalk.tts(text, speed=1.0, half_tone=0.0)
+            result[0] = audio_array
+            result[1] = sample_rate
+            print(f"Worker: Synthesis complete", flush=True)
+        except Exception as e:
+            result[2] = str(e)
+            print(f"Worker: Synthesis error: {{e}}", flush=True)
+    
+    # Start synthesis in thread
+    worker_thread = threading.Thread(target=synthesis_worker, daemon=True)
+    worker_thread.start()
+    worker_thread.join(timeout=timeout_seconds)
+    
+    if worker_thread.is_alive():
+        print(f"Worker: Synthesis timeout after {{timeout_seconds}}s", flush=True)
+        raise SynthesisTimeout(f"Synthesis timed out after {{timeout_seconds}} seconds")
+    
+    if result[2]:
+        raise Exception(result[2])
+    
+    return result[0], result[1]
 
 try:
     import pyopenjtalk
     print("PyOpenJTalk+ synthesis server ready", flush=True)
     
+    # Set up signal handler for timeouts (Linux only)
+    if hasattr(signal, 'SIGALRM'):
+        signal.signal(signal.SIGALRM, timeout_handler)
+    
     while True:
         try:
-            # Read request from stdin
+            # Read request from stdin with timeout
+            print("Server: Waiting for request...", flush=True)
             line = sys.stdin.readline()
             if not line:
+                print("Server: EOF received, shutting down", flush=True)
                 break
                 
+            print(f"Server: Received request: {{line.strip()[:100]}}...", flush=True)
             request = json.loads(line.strip())
             request_id = request.get("id", 0)
             text = request.get("text", "")
             voice_path = request.get("voice_path", None)
             
+            print(f"Server: Processing request {{request_id}} for text: '{{text[:50]}}...'", flush=True)
+            
             # Set voice if provided
             if voice_path:
+                print(f"Server: Setting voice to {{voice_path}}", flush=True)
                 pyopenjtalk.DEFAULT_HTS_VOICE = voice_path.encode('utf-8')
             
-            # Synthesize
-            audio_array, sample_rate = pyopenjtalk.tts(text, speed=1.0, half_tone=0.0)
+            start_time = time.time()
             
-            # Process audio
+            # Synthesize with timeout protection (reduced for Pi)
+            try:
+                audio_array, sample_rate = synthesis_with_timeout(text, voice_path, timeout_seconds=15)
+                synthesis_time = time.time() - start_time
+                print(f"Server: Synthesis completed in {{synthesis_time:.3f}}s", flush=True)
+            except SynthesisTimeout as e:
+                error_response = {{
+                    "id": request_id,
+                    "success": False,
+                    "error": "Synthesis timeout",
+                    "traceback": str(e)
+                }}
+                print("RESPONSE:" + json.dumps(error_response), flush=True)
+                continue
+            
+            # Process audio quickly with Pi optimizations
+            print(f"Server: Processing audio ({{len(audio_array)}} samples at {{sample_rate}}Hz)...", flush=True)
+            
+            # Convert to float64 if needed (memory efficient)
             if audio_array.dtype != np.float64:
                 audio_array = audio_array.astype(np.float64)
             
-            # Normalize audio
+            # Normalize audio (in-place to save memory)
             audio_max = np.max(np.abs(audio_array))
             if audio_max > 1.0:
-                audio_array = audio_array / audio_max
+                audio_array /= audio_max  # In-place division
             
-            # Resample to 22050 Hz to match Piper's native sample rate
-            target_sample_rate = 22050
-            if sample_rate != target_sample_rate:
-                try:
-                    from scipy import signal
-                    resample_ratio = target_sample_rate / sample_rate
-                    new_length = int(len(audio_array) * resample_ratio)
-                    audio_array = signal.resample(audio_array, new_length)
-                except ImportError:
-                    # Simple resampling fallback
-                    resample_ratio = target_sample_rate / sample_rate
-                    indices = np.arange(0, len(audio_array), 1/resample_ratio).astype(int)
-                    indices = indices[indices < len(audio_array)]
-                    audio_array = audio_array[indices]
-            
-            # Convert to int16 for pygame
+            # Convert to int16 directly at native sample rate (no resampling for Pi)
             audio_array = np.clip(audio_array * 32767, -32768, 32767).astype(np.int16)
             
-            # Encode audio as base64 for JSON transmission
-            audio_b64 = base64.b64encode(audio_array.tobytes()).decode('ascii')
-            
-            # Send response
-            response = {{
-                "id": request_id,
-                "success": True,
-                "audio_b64": audio_b64,
-                "length": len(audio_array),
-                "sample_rate": target_sample_rate
-            }}
-            print("RESPONSE:" + json.dumps(response), flush=True)
+            # Create temporary WAV file efficiently (Pi optimized)
+            print(f"Server: Creating WAV file...", flush=True)
+            try:
+                # Use /tmp on Pi for faster I/O if available
+                import platform
+                if platform.system() == "Linux":
+                    temp_dir = "/tmp" if os.path.exists("/tmp") else None
+                else:
+                    temp_dir = None
+                    
+                with tempfile.NamedTemporaryFile(suffix='.wav', delete=False, dir=temp_dir) as temp_wav:
+                    temp_wav_path = temp_wav.name
+                    
+                # Write WAV file using wave module
+                with wave.open(temp_wav_path, 'wb') as wav_file:
+                    wav_file.setnchannels(1)  # Mono
+                    wav_file.setsampwidth(2)  # 16-bit
+                    wav_file.setframerate(sample_rate)  # Native sample rate
+                    wav_file.writeframes(audio_array.tobytes())
+                
+                # Verify file was created
+                if not os.path.exists(temp_wav_path):
+                    raise Exception("WAV file was not created successfully")
+                
+                file_size = os.path.getsize(temp_wav_path)
+                print(f"Server: WAV file created: {{temp_wav_path}} ({{file_size}} bytes)", flush=True)
+                
+                # Send response with WAV file path
+                total_time = time.time() - start_time
+                response = {{
+                    "id": request_id,
+                    "success": True,
+                    "wav_path": temp_wav_path,
+                    "length": len(audio_array),
+                    "sample_rate": sample_rate,
+                    "processing_time": total_time
+                }}
+                print("RESPONSE:" + json.dumps(response), flush=True)
+                
+            except Exception as wav_error:
+                print(f"Server: WAV creation error: {{wav_error}}", flush=True)
+                error_response = {{
+                    "id": request_id,
+                    "success": False,
+                    "error": f"WAV creation failed: {{str(wav_error)}}",
+                    "traceback": traceback.format_exc()
+                }}
+                print("RESPONSE:" + json.dumps(error_response), flush=True)
             
         except Exception as e:
             # Send error response
@@ -1554,22 +1643,28 @@ except Exception as e:
             self.reader_thread = threading.Thread(target=self._read_stdout, daemon=True)
             self.reader_thread.start()
             
-            # Wait for server ready message
+            # Wait for server ready message (longer timeout for Pi)
             ready = False
-            for _ in range(50):  # 5 seconds timeout
+            max_wait_iterations = 100 if not IS_WINDOWS else 50  # 10s for Pi, 5s for Windows
+            for i in range(max_wait_iterations):
                 if self.process.poll() is not None:
+                    print(f"[PyOpenJTalk+] Process died during startup (iteration {i})")
                     break
                 time.sleep(0.1)
                 # Check if we got the ready message in our buffer
                 buffer_str = self.output_buffer.decode('utf-8', errors='ignore')
                 if "PyOpenJTalk+ synthesis server ready" in buffer_str:
                     ready = True
+                    print(f"[PyOpenJTalk+] Server ready after {i*0.1:.1f}s")
                     break
             
             if ready:
                 print("[PyOpenJTalk+] Persistent synthesis process started successfully")
             else:
-                print("[PyOpenJTalk+] Warning: Synthesis process may not be ready")
+                print("[PyOpenJTalk+] Warning: Synthesis process may not be ready (Pi needs more time)")
+                # On Pi, still proceed even if not fully ready
+                if not IS_WINDOWS:
+                    print("[PyOpenJTalk+] Proceeding anyway on Pi - will retry if needed")
                 
         except Exception as e:
             print(f"[PyOpenJTalk+] Failed to start persistent process: {e}")
@@ -1728,9 +1823,8 @@ except Exception as e:
                 return voice
         return None
     
-    def synthesize(self, text, timeout=30.0):
-        """Synthesize text to audio using persistent PyOpenJTalk+ process"""
-        import json
+    def synthesize(self, text, timeout=12.0):
+        """Synthesize text to audio - use smart direct method for Pi reliability"""
         import base64
         import time
         
@@ -1739,12 +1833,21 @@ except Exception as e:
                 print("[PyOpenJTalk+] pyopenjtalk-plus not available")
                 return b''
             
+            # For Pi/Linux, prefer direct synthesis for reliability
+            if not IS_WINDOWS:
+                print("[PyOpenJTalk+] Using smart direct synthesis for Pi reliability")
+                voice_path = self.get_voice_path(self.current_voice)
+                return self._synthesize_smart_direct(text, voice_path)
+            
+            # Windows can use the persistent process approach
             # Check if process is running
             if not self.process or self.process.poll() is not None:
                 print("[PyOpenJTalk+] Process not running, restarting...")
                 self.start_process()
                 if not self.process:
-                    return b''
+                    print("[PyOpenJTalk+] Failed to restart process, using direct synthesis")
+                    voice_path = self.get_voice_path(self.current_voice)
+                    return self._synthesize_smart_direct(text, voice_path)
             
             try:
                 voice_path = self.get_voice_path(self.current_voice)
@@ -1774,9 +1877,6 @@ except Exception as e:
                 self.process.stdin.flush()
                 
                 # Wait for response
-                import time
-                import json
-                import base64
                 
                 synthesis_start = time.time()
                 start_time = time.time()
@@ -1796,17 +1896,31 @@ except Exception as e:
                                 response_data = json.loads(line[9:])  # Remove 'RESPONSE:' prefix
                                 if response_data.get('id') == request_id:
                                     if response_data.get('success'):
-                                        # Decode audio data
-                                        audio_b64 = response_data.get('audio_b64', '')
-                                        audio_bytes = base64.b64decode(audio_b64)
+                                        # Get WAV file path from response
+                                        wav_path = response_data.get('wav_path', '')
+                                        sample_rate = response_data.get('sample_rate', 48000)
                                         
-                                        synthesis_time = time.time() - synthesis_start
-                                        audio_length_seconds = len(audio_bytes) / 2 / 22050  # 16-bit samples at 22050 Hz
-                                        realtime_factor = audio_length_seconds / synthesis_time if synthesis_time > 0 else 0
-                                        
-                                        print(f"[PyOpenJTalk+] Synthesis completed in {synthesis_time:.3f}s (RTF: {realtime_factor:.2f}x)")
-                                        print(f"[PyOpenJTalk+] Successfully generated {len(audio_bytes)} bytes ({audio_length_seconds:.2f}s audio)")
-                                        return audio_bytes
+                                        if wav_path and os.path.exists(wav_path):
+                                            # Read WAV file directly
+                                            with open(wav_path, 'rb') as f:
+                                                audio_bytes = f.read()
+                                            
+                                            # Clean up temporary file
+                                            try:
+                                                os.unlink(wav_path)
+                                            except:
+                                                pass
+                                            
+                                            synthesis_time = time.time() - synthesis_start
+                                            audio_length_seconds = (len(audio_bytes) - 44) / 2 / sample_rate  # WAV header is ~44 bytes, 16-bit samples
+                                            realtime_factor = audio_length_seconds / synthesis_time if synthesis_time > 0 else 0
+                                            
+                                            print(f"[PyOpenJTalk+] Synthesis completed in {synthesis_time:.3f}s (RTF: {realtime_factor:.2f}x)")
+                                            print(f"[PyOpenJTalk+] Successfully generated WAV file: {len(audio_bytes)} bytes ({audio_length_seconds:.2f}s audio at {sample_rate}Hz)")
+                                            return audio_bytes
+                                        else:
+                                            print(f"[PyOpenJTalk+] WAV file not found: {wav_path}")
+                                            return b''
                                     else:
                                         error = response_data.get('error', 'Unknown error')
                                         synthesis_time = time.time() - synthesis_start
@@ -1819,7 +1933,24 @@ except Exception as e:
                 
                 synthesis_time = time.time() - synthesis_start
                 print(f"[PyOpenJTalk+] Synthesis timeout after {timeout} seconds (total time: {synthesis_time:.3f}s)")
-                return b''
+                
+                # If we timeout, kill and restart the process
+                print("[PyOpenJTalk+] Process appears hung, restarting...")
+                try:
+                    if self.process and self.process.poll() is None:
+                        self.process.kill()
+                        self.process.wait(timeout=2)
+                except:
+                    pass
+                
+                # Clear the old process and restart
+                self.process = None
+                self.start_process()
+                
+                # Try direct synthesis as fallback
+                print("[PyOpenJTalk+] Using direct synthesis as fallback after timeout")
+                voice_path = self.get_voice_path(self.current_voice)
+                return self._synthesize_direct(text, voice_path)
                 
             except Exception as e:
                 synthesis_time = time.time() - synthesis_start
@@ -1854,7 +1985,6 @@ except Exception as e:
         # Clean up temporary server script
         if hasattr(self, 'server_script_path'):
             try:
-                import os
                 os.unlink(self.server_script_path)
             except:
                 pass
@@ -1866,7 +1996,7 @@ except Exception as e:
         print("[PyOpenJTalk+] Cleanup completed")
     
     def _synthesize_direct(self, text, voice_path):
-        """Direct synthesis fallback (may not respect voice switching properly)"""
+        """Direct synthesis fallback with WAV file creation"""
         try:
             print(f"[PyOpenJTalk+] Using direct synthesis fallback")
             
@@ -1889,24 +2019,102 @@ except Exception as e:
             if audio_max > 1.0:
                 audio_array = audio_array / audio_max
             
-            target_sample_rate = 22050
-            if sample_rate != target_sample_rate:
-                try:
-                    from scipy import signal
-                    resample_ratio = target_sample_rate / sample_rate
-                    new_length = int(len(audio_array) * resample_ratio)
-                    audio_array = signal.resample(audio_array, new_length)
-                except ImportError:
-                    resample_ratio = target_sample_rate / sample_rate
-                    indices = np.arange(0, len(audio_array), 1/resample_ratio).astype(int)
-                    indices = indices[indices < len(audio_array)]
-                    audio_array = audio_array[indices]
-            
+            # Use native sample rate - no resampling
             audio_array = np.clip(audio_array * 32767, -32768, 32767).astype(np.int16)
-            return audio_array.tobytes()
+            
+            # Create temporary WAV file using wave module (proven approach)
+            import tempfile
+            import wave
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_wav:
+                temp_wav_path = temp_wav.name
+                
+            with wave.open(temp_wav_path, 'wb') as wav_file:
+                wav_file.setnchannels(1)  # Mono
+                wav_file.setsampwidth(2)  # 16-bit
+                wav_file.setframerate(sample_rate)  # Native sample rate
+                wav_file.writeframes(audio_array.tobytes())
+            
+            # Read WAV file and return bytes
+            with open(temp_wav_path, 'rb') as f:
+                wav_bytes = f.read()
+            
+            # Clean up temporary file
+            try:
+                os.unlink(temp_wav_path)
+            except:
+                pass
+            
+            print(f"[PyOpenJTalk+] Direct synthesis: {len(wav_bytes)} bytes at {sample_rate}Hz")
+            return wav_bytes
             
         except Exception as e:
             print(f"[PyOpenJTalk+] Direct synthesis fallback failed: {e}")
+            return b''
+    
+    def _synthesize_smart_direct(self, text, voice_path):
+        """Smart direct synthesis optimized for Pi reliability"""
+        try:
+            print(f"[PyOpenJTalk+] Using smart direct synthesis")
+            
+            if voice_path:
+                # Try to set voice (may not work due to caching)
+                original_voice = pyopenjtalk.DEFAULT_HTS_VOICE
+                pyopenjtalk.DEFAULT_HTS_VOICE = str(voice_path).encode('utf-8')
+                try:
+                    audio_array, sample_rate = pyopenjtalk.tts(text, speed=1.0, half_tone=0.0)
+                finally:
+                    pyopenjtalk.DEFAULT_HTS_VOICE = original_voice
+            else:
+                audio_array, sample_rate = pyopenjtalk.tts(text, speed=1.0, half_tone=0.0)
+            
+            # Process audio with Pi optimizations
+            if audio_array.dtype != np.float64:
+                audio_array = audio_array.astype(np.float64)
+            
+            # Normalize audio (in-place to save memory)
+            audio_max = np.max(np.abs(audio_array))
+            if audio_max > 1.0:
+                audio_array /= audio_max  # In-place division
+            
+            # Use native sample rate for Pi - no resampling
+            audio_array = np.clip(audio_array * 32767, -32768, 32767).astype(np.int16)
+            
+            # Create temporary WAV file efficiently (Pi optimized)
+            import tempfile
+            import wave
+            import platform
+            
+            # Use /tmp on Pi for faster I/O if available
+            if platform.system() == "Linux":
+                temp_dir = "/tmp" if os.path.exists("/tmp") else None
+            else:
+                temp_dir = None
+                
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False, dir=temp_dir) as temp_wav:
+                temp_wav_path = temp_wav.name
+                
+            # Write WAV file using wave module
+            with wave.open(temp_wav_path, 'wb') as wav_file:
+                wav_file.setnchannels(1)  # Mono
+                wav_file.setsampwidth(2)  # 16-bit
+                wav_file.setframerate(sample_rate)  # Native sample rate
+                wav_file.writeframes(audio_array.tobytes())
+            
+            # Read WAV file and return bytes
+            with open(temp_wav_path, 'rb') as f:
+                wav_bytes = f.read()
+            
+            # Clean up temporary file
+            try:
+                os.unlink(temp_wav_path)
+            except:
+                pass
+            
+            print(f"[PyOpenJTalk+] Smart direct synthesis: {len(wav_bytes)} bytes at {sample_rate}Hz")
+            return wav_bytes
+            
+        except Exception as e:
+            print(f"[PyOpenJTalk+] Smart direct synthesis failed: {e}")
             return b''
 
 # --- TTS Engine Manager --- #
