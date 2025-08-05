@@ -15,6 +15,6 @@
   ],
   "tts_engine": "openjtalk",
   "voicevox_speaker_id": 8,
-  "piper_model": "C:\\Users\\Pidge\\Documents\\ProxiTalk\\tts\\piper\\en_GB-cori-medium.onnx",
-  "pyopenjtalk_voice": "mei_bashful.htsvoice"
+  "piper_model": "C:\\Users\\Pidge\\Documents\\ProxiTalk\\tts\\piper\\en_US-kristin-medium.onnx",
+  "pyopenjtalk_voice": "tohoku-f01_happy.htsvoice"
 }

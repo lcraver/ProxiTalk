@@ -8,6 +8,9 @@ import queue
 import select
 import atexit
 import re
+import json
+import tempfile
+import traceback
 import platform
 import requests
 import json
@@ -823,6 +826,8 @@ if IS_WINDOWS:
 
         def synthesize(self, text, timeout=5.0):
             with self.lock:
+                synthesis_start = time.time()
+                
                 if not self.process or self.process.poll() is not None:
                     print("[Piper] Process not running. Restarting.", flush=True)
                     self.start_process()
@@ -845,9 +850,15 @@ if IS_WINDOWS:
                     time.sleep(0.05)
 
                 raw_audio = bytes(self.output_buffer)
+                synthesis_time = time.time() - synthesis_start
                 
-                # Return raw audio at native 22050 Hz - no resampling needed
-                print(f"[Piper] Audio generated: {len(raw_audio)//2} samples at 22050 Hz")
+                if raw_audio:
+                    audio_length_seconds = len(raw_audio) / 2 / 22050  # 16-bit samples at 22050 Hz
+                    realtime_factor = audio_length_seconds / synthesis_time if synthesis_time > 0 else 0
+                    print(f"[Piper] Synthesis completed in {synthesis_time:.3f}s (RTF: {realtime_factor:.2f}x)")
+                    print(f"[Piper] Audio generated: {len(raw_audio)//2} samples at 22050 Hz")
+                else:
+                    print(f"[Piper] Synthesis failed after {synthesis_time:.3f}s")
                 
                 return raw_audio
 
@@ -948,6 +959,8 @@ else:
 
         def synthesize(self, text):
             with self.lock:
+                synthesis_start = time.time()
+                
                 if not self.process or self.process.poll() is not None:
                     print("[Piper] Process not running. Restarting.")
                     self.start_process()
@@ -996,14 +1009,19 @@ else:
                         print(f"[Piper] Error during select/read: {e}")
                         break
 
+                synthesis_time = time.time() - synthesis_start
+                
                 # In synthesize():
                 if not output:
-                    print("[Piper] Empty audio. Restarting Piper.")
+                    print(f"[Piper] Empty audio after {synthesis_time:.3f}s. Restarting Piper.")
                     self.close()
                     self.start_process()
                     return b''
 
                 # Return raw audio at native 22050 Hz - no resampling needed
+                audio_length_seconds = len(output) / 2 / 22050  # 16-bit samples at 22050 Hz
+                realtime_factor = audio_length_seconds / synthesis_time if synthesis_time > 0 else 0
+                print(f"[Piper] Synthesis completed in {synthesis_time:.3f}s (RTF: {realtime_factor:.2f}x)")
                 print(f"[Piper] Audio generated: {len(output)//2} samples at 22050 Hz")
 
                 return output
@@ -1066,6 +1084,8 @@ if IS_WINDOWS:
         def synthesize(self, text, timeout=10.0):
             """Synthesize text to audio using VoiceVox API"""
             with self.lock:
+                synthesis_start = time.time()
+                
                 if not self.is_running or not self._check_server_status():
                     print("[VoiceVox] Server not running. Restarting.", flush=True)
                     self.start_process()
@@ -1098,13 +1118,34 @@ if IS_WINDOWS:
                         print(f"[VoiceVox] Synthesis failed: {synthesis_response.status_code}")
                         return b''
                     
-                    return synthesis_response.content
+                    result = synthesis_response.content
+                    synthesis_time = time.time() - synthesis_start
+                    
+                    if result:
+                        # VoiceVox typically outputs WAV format - estimate audio length
+                        # WAV header is typically 44 bytes, then audio data
+                        if len(result) > 44:
+                            audio_data_size = len(result) - 44
+                            # Assume 16-bit mono at 24000 Hz (VoiceVox default)
+                            audio_length_seconds = audio_data_size / 2 / 24000
+                        else:
+                            audio_length_seconds = 0
+                        
+                        realtime_factor = audio_length_seconds / synthesis_time if synthesis_time > 0 else 0
+                        print(f"[VoiceVox] Synthesis completed in {synthesis_time:.3f}s (RTF: {realtime_factor:.2f}x)")
+                        print(f"[VoiceVox] Generated {len(result)} bytes ({audio_length_seconds:.2f}s audio)")
+                    else:
+                        print(f"[VoiceVox] Synthesis failed after {synthesis_time:.3f}s")
+                    
+                    return result
                     
                 except requests.exceptions.RequestException as e:
-                    print(f"[VoiceVox] Request error: {e}")
+                    synthesis_time = time.time() - synthesis_start
+                    print(f"[VoiceVox] Request error after {synthesis_time:.3f}s: {e}")
                     return b''
                 except Exception as e:
-                    print(f"[VoiceVox] Synthesis error: {e}")
+                    synthesis_time = time.time() - synthesis_start
+                    print(f"[VoiceVox] Synthesis error after {synthesis_time:.3f}s: {e}")
                     return b''
 
         def set_speaker_id(self, speaker_id):
@@ -1238,6 +1279,8 @@ else:
         def synthesize(self, text, timeout=10.0):
             """Synthesize text to audio using VoiceVox API"""
             with self.lock:
+                synthesis_start = time.time()
+                
                 if not self.is_running or not self._check_server_status():
                     print("[VoiceVox] Server not running. Restarting.", flush=True)
                     self.start_process()
@@ -1270,13 +1313,34 @@ else:
                         print(f"[VoiceVox] Synthesis failed: {synthesis_response.status_code}")
                         return b''
                     
-                    return synthesis_response.content
+                    result = synthesis_response.content
+                    synthesis_time = time.time() - synthesis_start
+                    
+                    if result:
+                        # VoiceVox typically outputs WAV format - estimate audio length
+                        # WAV header is typically 44 bytes, then audio data
+                        if len(result) > 44:
+                            audio_data_size = len(result) - 44
+                            # Assume 16-bit mono at 24000 Hz (VoiceVox default)
+                            audio_length_seconds = audio_data_size / 2 / 24000
+                        else:
+                            audio_length_seconds = 0
+                        
+                        realtime_factor = audio_length_seconds / synthesis_time if synthesis_time > 0 else 0
+                        print(f"[VoiceVox] Synthesis completed in {synthesis_time:.3f}s (RTF: {realtime_factor:.2f}x)")
+                        print(f"[VoiceVox] Generated {len(result)} bytes ({audio_length_seconds:.2f}s audio)")
+                    else:
+                        print(f"[VoiceVox] Synthesis failed after {synthesis_time:.3f}s")
+                    
+                    return result
                     
                 except requests.exceptions.RequestException as e:
-                    print(f"[VoiceVox] Request error: {e}")
+                    synthesis_time = time.time() - synthesis_start
+                    print(f"[VoiceVox] Request error after {synthesis_time:.3f}s: {e}")
                     return b''
                 except Exception as e:
-                    print(f"[VoiceVox] Synthesis error: {e}")
+                    synthesis_time = time.time() - synthesis_start
+                    print(f"[VoiceVox] Synthesis error after {synthesis_time:.3f}s: {e}")
                     return b''
 
         def set_speaker_id(self, speaker_id):
@@ -1346,6 +1410,13 @@ class PyOpenJTalkPlusTTS:
         self.available_voices = []
         self.lock = threading.Lock()
         
+        # Persistent process management
+        self.process = None
+        self.output_buffer = bytearray()
+        self._stop_event = threading.Event()
+        self.reader_thread = None
+        self._request_id = 0
+        
         # Check if pyopenjtalk-plus is available
         if not PYOPENJTALK_PLUS_AVAILABLE:
             print("[PyOpenJTalk+] Error: pyopenjtalk-plus not available")
@@ -1363,6 +1434,188 @@ class PyOpenJTalkPlusTTS:
         except Exception as e:
             print(f"[PyOpenJTalk+] Module test failed: {e}")
             print("[PyOpenJTalk+] Note: pyopenjtalk-plus may have dependency issues on this system")
+        
+        # Start persistent process
+        self.start_process()
+    
+    def start_process(self):
+        """Start the persistent PyOpenJTalk+ synthesis process"""
+        import subprocess
+        import tempfile
+        import sys
+        import time
+        
+        self._stop_event.clear()
+        self.output_buffer = bytearray()
+        
+        try:
+            # Create the synthesis server script
+            server_script = f'''
+import sys
+import json
+import numpy as np
+import traceback
+import base64
+
+try:
+    import pyopenjtalk
+    print("PyOpenJTalk+ synthesis server ready", flush=True)
+    
+    while True:
+        try:
+            # Read request from stdin
+            line = sys.stdin.readline()
+            if not line:
+                break
+                
+            request = json.loads(line.strip())
+            request_id = request.get("id", 0)
+            text = request.get("text", "")
+            voice_path = request.get("voice_path", None)
+            
+            # Set voice if provided
+            if voice_path:
+                pyopenjtalk.DEFAULT_HTS_VOICE = voice_path.encode('utf-8')
+            
+            # Synthesize
+            audio_array, sample_rate = pyopenjtalk.tts(text, speed=1.0, half_tone=0.0)
+            
+            # Process audio
+            if audio_array.dtype != np.float64:
+                audio_array = audio_array.astype(np.float64)
+            
+            # Normalize audio
+            audio_max = np.max(np.abs(audio_array))
+            if audio_max > 1.0:
+                audio_array = audio_array / audio_max
+            
+            # Resample to 22050 Hz to match Piper's native sample rate
+            target_sample_rate = 22050
+            if sample_rate != target_sample_rate:
+                try:
+                    from scipy import signal
+                    resample_ratio = target_sample_rate / sample_rate
+                    new_length = int(len(audio_array) * resample_ratio)
+                    audio_array = signal.resample(audio_array, new_length)
+                except ImportError:
+                    # Simple resampling fallback
+                    resample_ratio = target_sample_rate / sample_rate
+                    indices = np.arange(0, len(audio_array), 1/resample_ratio).astype(int)
+                    indices = indices[indices < len(audio_array)]
+                    audio_array = audio_array[indices]
+            
+            # Convert to int16 for pygame
+            audio_array = np.clip(audio_array * 32767, -32768, 32767).astype(np.int16)
+            
+            # Encode audio as base64 for JSON transmission
+            audio_b64 = base64.b64encode(audio_array.tobytes()).decode('ascii')
+            
+            # Send response
+            response = {{
+                "id": request_id,
+                "success": True,
+                "audio_b64": audio_b64,
+                "length": len(audio_array),
+                "sample_rate": target_sample_rate
+            }}
+            print("RESPONSE:" + json.dumps(response), flush=True)
+            
+        except Exception as e:
+            # Send error response
+            error_response = {{
+                "id": request_id,
+                "success": False,
+                "error": str(e),
+                "traceback": traceback.format_exc()
+            }}
+            print("RESPONSE:" + json.dumps(error_response), flush=True)
+            
+except Exception as e:
+    print(f"FATAL_ERROR: {{str(e)}}", flush=True)
+    sys.exit(1)
+'''
+            
+            # Write server script to temporary file
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
+                f.write(server_script)
+                self.server_script_path = f.name
+            
+            # Start the server process
+            self.process = subprocess.Popen(
+                [sys.executable, self.server_script_path],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=0  # Unbuffered for real-time communication
+            )
+            
+            # Start output reader thread
+            self.reader_thread = threading.Thread(target=self._read_stdout, daemon=True)
+            self.reader_thread.start()
+            
+            # Wait for server ready message
+            ready = False
+            for _ in range(50):  # 5 seconds timeout
+                if self.process.poll() is not None:
+                    break
+                time.sleep(0.1)
+                # Check if we got the ready message in our buffer
+                buffer_str = self.output_buffer.decode('utf-8', errors='ignore')
+                if "PyOpenJTalk+ synthesis server ready" in buffer_str:
+                    ready = True
+                    break
+            
+            if ready:
+                print("[PyOpenJTalk+] Persistent synthesis process started successfully")
+            else:
+                print("[PyOpenJTalk+] Warning: Synthesis process may not be ready")
+                
+        except Exception as e:
+            print(f"[PyOpenJTalk+] Failed to start persistent process: {e}")
+            self.process = None
+    
+    def _read_stdout(self):
+        """Read stdout from the synthesis process"""
+        while not self._stop_event.is_set() and self.process:
+            try:
+                if self.process.poll() is not None:
+                    break
+                    
+                # Windows-compatible non-blocking read
+                if IS_WINDOWS:
+                    try:
+                        # Use readline for line-buffered reading on Windows
+                        line = self.process.stdout.readline()
+                        if line:
+                            self.output_buffer.extend(line.encode('utf-8'))
+                        else:
+                            time.sleep(0.01)  # Small delay if no data
+                    except Exception:
+                        time.sleep(0.1)
+                else:
+                    # Unix systems can use select
+                    try:
+                        import select
+                        ready, _, _ = select.select([self.process.stdout], [], [], 0.1)
+                        if ready:
+                            data = self.process.stdout.read(4096)
+                            if data:
+                                self.output_buffer.extend(data.encode('utf-8'))
+                    except ImportError:
+                        # Fallback if select not available
+                        try:
+                            line = self.process.stdout.readline()
+                            if line:
+                                self.output_buffer.extend(line.encode('utf-8'))
+                            else:
+                                time.sleep(0.01)
+                        except:
+                            time.sleep(0.1)
+                        
+            except Exception as e:
+                print(f"[PyOpenJTalk+] Output reader error: {e}")
+                break
     
     def _discover_voices(self):
         """Discover available HTS voice files"""
@@ -1438,8 +1691,15 @@ class PyOpenJTalkPlusTTS:
         """Set the current voice"""
         voice_path = self.get_voice_path(voice_filename)
         if voice_path and os.path.exists(voice_path):
+            old_voice = self.current_voice
             self.current_voice = voice_filename
             print(f"[PyOpenJTalk+] Voice changed to: {voice_filename}")
+            
+            # Restart persistent process if voice actually changed
+            if old_voice != voice_filename and self.process:
+                print(f"[PyOpenJTalk+] Restarting process for voice change: {old_voice} -> {voice_filename}")
+                self.close()
+                self.start_process()
             
             # Save to preferences
             try:
@@ -1469,171 +1729,141 @@ class PyOpenJTalkPlusTTS:
         return None
     
     def synthesize(self, text, timeout=30.0):
-        """Synthesize text to audio using pyopenjtalk-plus with subprocess isolation for voice switching"""
+        """Synthesize text to audio using persistent PyOpenJTalk+ process"""
+        import json
+        import base64
+        import time
+        
         with self.lock:
             if not PYOPENJTALK_PLUS_AVAILABLE:
                 print("[PyOpenJTalk+] pyopenjtalk-plus not available")
                 return b''
             
-            voice_path = self.get_voice_path(self.current_voice)
-            if not voice_path or not os.path.exists(voice_path):
-                print(f"[PyOpenJTalk+] Voice file not found: {self.current_voice}")
-                # Use built-in voice if custom voice not available
-                print("[PyOpenJTalk+] Falling back to built-in voice")
-                voice_path = None
+            # Check if process is running
+            if not self.process or self.process.poll() is not None:
+                print("[PyOpenJTalk+] Process not running, restarting...")
+                self.start_process()
+                if not self.process:
+                    return b''
             
             try:
-                # Auto-convert romanji to hiragana if needed using shared utility
+                voice_path = self.get_voice_path(self.current_voice)
+                if voice_path and not os.path.exists(voice_path):
+                    print(f"[PyOpenJTalk+] Voice file not found: {self.current_voice}")
+                    voice_path = None
+                
                 print(f"[PyOpenJTalk+] Synthesizing text: '{text}' with voice: {self.current_voice}")
-                converted_text = convert_romanji_to_hiragana(text)
-                print(f"[PyOpenJTalk+] Converted text: '{converted_text}'")
                 
-                print(f"[PyOpenJTalk+] Synthesizing text: '{converted_text}' with voice: {self.current_voice}")
+                # Generate unique request ID
+                self._request_id += 1
+                request_id = self._request_id
                 
-                # Use subprocess isolation to ensure voice switching works properly
-                # This is necessary because pyopenjtalk caches voice models after initialization
-                audio_bytes = self._synthesize_with_subprocess(converted_text, voice_path, timeout)
+                # Create request
+                request = {
+                    "id": request_id,
+                    "text": text,
+                    "voice_path": str(voice_path) if voice_path else None
+                }
                 
-                if audio_bytes:
-                    print(f"[PyOpenJTalk+] Successfully generated {len(audio_bytes)} bytes of audio")
-                    return audio_bytes
-                else:
-                    print("[PyOpenJTalk+] Subprocess synthesis failed, trying fallback")
-                    # Fallback to direct synthesis (may not respect voice switching)
-                    return self._synthesize_direct(converted_text, voice_path)
+                # Clear output buffer before sending request
+                self.output_buffer.clear()
+                
+                # Send request to process
+                request_json = json.dumps(request) + '\n'
+                self.process.stdin.write(request_json)
+                self.process.stdin.flush()
+                
+                # Wait for response
+                import time
+                import json
+                import base64
+                
+                synthesis_start = time.time()
+                start_time = time.time()
+                while time.time() - start_time < timeout:
+                    # Check if process died
+                    if self.process.poll() is not None:
+                        print("[PyOpenJTalk+] Process died during synthesis")
+                        return b''
+                    
+                    # Look for response in output buffer
+                    buffer_str = self.output_buffer.decode('utf-8', errors='ignore')
+                    lines = buffer_str.split('\n')
+                    
+                    for line in lines:
+                        if line.startswith('RESPONSE:'):
+                            try:
+                                response_data = json.loads(line[9:])  # Remove 'RESPONSE:' prefix
+                                if response_data.get('id') == request_id:
+                                    if response_data.get('success'):
+                                        # Decode audio data
+                                        audio_b64 = response_data.get('audio_b64', '')
+                                        audio_bytes = base64.b64decode(audio_b64)
+                                        
+                                        synthesis_time = time.time() - synthesis_start
+                                        audio_length_seconds = len(audio_bytes) / 2 / 22050  # 16-bit samples at 22050 Hz
+                                        realtime_factor = audio_length_seconds / synthesis_time if synthesis_time > 0 else 0
+                                        
+                                        print(f"[PyOpenJTalk+] Synthesis completed in {synthesis_time:.3f}s (RTF: {realtime_factor:.2f}x)")
+                                        print(f"[PyOpenJTalk+] Successfully generated {len(audio_bytes)} bytes ({audio_length_seconds:.2f}s audio)")
+                                        return audio_bytes
+                                    else:
+                                        error = response_data.get('error', 'Unknown error')
+                                        synthesis_time = time.time() - synthesis_start
+                                        print(f"[PyOpenJTalk+] Synthesis error after {synthesis_time:.3f}s: {error}")
+                                        return b''
+                            except json.JSONDecodeError:
+                                continue
+                    
+                    time.sleep(0.01)  # Small delay to prevent busy waiting
+                
+                synthesis_time = time.time() - synthesis_start
+                print(f"[PyOpenJTalk+] Synthesis timeout after {timeout} seconds (total time: {synthesis_time:.3f}s)")
+                return b''
                 
             except Exception as e:
-                print(f"[PyOpenJTalk+] Synthesis error: {e}")
+                synthesis_time = time.time() - synthesis_start
+                print(f"[PyOpenJTalk+] Synthesis error after {synthesis_time:.3f}s: {e}")
                 traceback.print_exc()
                 return b''
     
-    def _synthesize_with_subprocess(self, text, voice_path, timeout):
-        """Use subprocess to synthesize with proper voice isolation"""
-        import subprocess
-        import tempfile
-        import sys
-        import json
+    def close(self):
+        """Cleanup PyOpenJTalk+ resources"""
+        self._stop_event.set()
         
-        # Create the synthesis script content
-        script_content = f'''
-import sys
-import numpy as np
-import traceback
-import json
-
-try:
-    import pyopenjtalk
-    
-    # Set voice before any synthesis
-    voice_path = {repr(str(voice_path) if voice_path else None)}
-    if voice_path:
-        pyopenjtalk.DEFAULT_HTS_VOICE = voice_path.encode('utf-8')
-    
-    # Synthesize
-    text = {repr(text)}
-    audio_array, sample_rate = pyopenjtalk.tts(text, speed=1.0, half_tone=0.0)
-    
-    # Convert to the format expected by pygame
-    if audio_array.dtype != np.float64:
-        audio_array = audio_array.astype(np.float64)
-    
-    # Normalize audio
-    audio_max = np.max(np.abs(audio_array))
-    if audio_max > 1.0:
-        audio_array = audio_array / audio_max
-    
-    # Resample to 22050 Hz to match Piper's native sample rate
-    target_sample_rate = 22050
-    if sample_rate != target_sample_rate:
-        try:
-            from scipy import signal
-            resample_ratio = target_sample_rate / sample_rate
-            new_length = int(len(audio_array) * resample_ratio)
-            audio_array = signal.resample(audio_array, new_length)
-        except ImportError:
-            # Simple resampling fallback
-            resample_ratio = target_sample_rate / sample_rate
-            indices = np.arange(0, len(audio_array), 1/resample_ratio).astype(int)
-            indices = indices[indices < len(audio_array)]
-            audio_array = audio_array[indices]
-    
-    # Convert to int16 for pygame
-    audio_array = np.clip(audio_array * 32767, -32768, 32767).astype(np.int16)
-    
-    # Output results as JSON
-    result = {{
-        "success": True,
-        "audio_bytes": audio_array.tobytes().hex(),
-        "length": len(audio_array),
-        "sample_rate": target_sample_rate
-    }}
-    print("SYNTHESIS_RESULT:" + json.dumps(result))
-    
-except Exception as e:
-    error_result = {{
-        "success": False,
-        "error": str(e),
-        "traceback": traceback.format_exc()
-    }}
-    print("SYNTHESIS_RESULT:" + json.dumps(error_result))
-'''
-        
-        try:
-            # Write script to temporary file
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
-                f.write(script_content)
-                temp_script = f.name
-            
-            # Run subprocess
+        if self.process:
             try:
-                result = subprocess.run(
-                    [sys.executable, temp_script],
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout
-                )
+                # Send shutdown signal to process
+                if self.process.poll() is None:
+                    self.process.stdin.write('\n')  # Empty line to signal shutdown
+                    self.process.stdin.flush()
                 
-                # Parse output
-                if result.returncode == 0:
-                    # Look for our JSON result in stdout
-                    lines = result.stdout.strip().split('\n')
-                    for line in lines:
-                        if line.startswith('SYNTHESIS_RESULT:'):
-                            result_json = json.loads(line[17:])  # Remove "SYNTHESIS_RESULT:" prefix
-                            
-                            if result_json.get('success'):
-                                # Convert hex back to bytes
-                                audio_bytes = bytes.fromhex(result_json['audio_bytes'])
-                                print(f"[PyOpenJTalk+] Subprocess synthesis successful: {result_json['length']} samples")
-                                return audio_bytes
-                            else:
-                                print(f"[PyOpenJTalk+] Subprocess synthesis failed: {result_json.get('error', 'Unknown error')}")
-                                return b''
-                    
-                    print(f"[PyOpenJTalk+] No valid result found in subprocess output")
-                    print(f"[PyOpenJTalk+] Subprocess stdout: {result.stdout}")
-                    if result.stderr:
-                        print(f"[PyOpenJTalk+] Subprocess stderr: {result.stderr}")
-                else:
-                    print(f"[PyOpenJTalk+] Subprocess failed with return code {result.returncode}")
-                    print(f"[PyOpenJTalk+] Subprocess stderr: {result.stderr}")
-                
-                return b''
-                
-            except subprocess.TimeoutExpired:
-                print(f"[PyOpenJTalk+] Subprocess synthesis timed out after {timeout} seconds")
-                return b''
+                self.process.terminate()
+                self.process.wait(timeout=3)
             except Exception as e:
-                print(f"[PyOpenJTalk+] Subprocess error: {e}")
-                return b''
-            
-        finally:
-            # Clean up temporary file
+                print(f"[PyOpenJTalk+] Error terminating process: {e}")
+                try:
+                    self.process.kill()
+                except:
+                    pass
+        
+        # Wait for reader thread to finish
+        if self.reader_thread and self.reader_thread.is_alive():
+            self.reader_thread.join(timeout=1.0)
+        
+        # Clean up temporary server script
+        if hasattr(self, 'server_script_path'):
             try:
                 import os
-                os.unlink(temp_script)
+                os.unlink(self.server_script_path)
             except:
                 pass
+        
+        # Reset process-related attributes
+        self.process = None
+        self.reader_thread = None
+        
+        print("[PyOpenJTalk+] Cleanup completed")
     
     def _synthesize_direct(self, text, voice_path):
         """Direct synthesis fallback (may not respect voice switching properly)"""
@@ -1678,10 +1908,6 @@ except Exception as e:
         except Exception as e:
             print(f"[PyOpenJTalk+] Direct synthesis fallback failed: {e}")
             return b''
-    
-    def close(self):
-        """Cleanup PyOpenJTalk+ resources"""
-        print("[PyOpenJTalk+] Cleanup completed")
 
 # --- TTS Engine Manager --- #
 
@@ -1690,7 +1916,6 @@ class TTSEngineManager:
         self.piper_instance = None
         self.voicevox_instance = None
         self.pyopenjtalk_plus_instance = None
-        self.current_engine = "piper"  # Default to Piper
         self.piper_bin = piper_bin
         self.model_path = model_path
         self.voicevox_bin = voicevox_bin
@@ -1709,16 +1934,39 @@ class TTSEngineManager:
         self._cache_timestamp = None
         self._cache_duration = 300  # Cache for 5 minutes
         
-        # Discover available Piper models
+        # Get preferred engine from user preferences (performance optimization for Pi Zero)
+        try:
+            from config.user_preferences import user_preferences
+            if user_preferences:
+                preferred_engine = user_preferences.get_tts_engine()
+                if preferred_engine in ["piper", "voicevox", "openjtalk"]:
+                    self.current_engine = preferred_engine
+                    print(f"[TTS] Using preferred engine from config: {preferred_engine}")
+                else:
+                    self.current_engine = "piper"  # Fallback default
+                    print(f"[TTS] Unknown engine '{preferred_engine}', defaulting to piper")
+            else:
+                self.current_engine = "piper"  # Fallback default
+                print(f"[TTS] No preferences found, defaulting to piper")
+        except Exception as e:
+            self.current_engine = "piper"  # Fallback default
+            print(f"[TTS] Error reading preferences: {e}, defaulting to piper")
+        
+        # Discover available Piper models (for model selection UI)
         self._discover_piper_models()
         
-        # Initialize PyOpenJTalk+ 
-        self._init_pyopenjtalk_plus()
+        # Initialize ONLY the preferred engine to save resources on Pi Zero
+        if self.current_engine == "piper":
+            print("[TTS] Initializing Piper engine (preferred)")
+            self._init_piper()
+        elif self.current_engine == "voicevox":
+            print("[TTS] Initializing VoiceVox engine (preferred)")
+            self._init_voicevox()
+        elif self.current_engine == "openjtalk":
+            print("[TTS] Initializing PyOpenJTalk+ engine (preferred)")
+            self._init_pyopenjtalk_plus()
         
-        # Initialize Piper by default
-        self._init_piper()
-        
-        # Note: VoiceVox initialization is now deferred until actually needed
+        # Other engines will be initialized on-demand when switched to
     
     def _discover_piper_models(self):
         """Discover available Piper .onnx model files"""
@@ -1917,32 +2165,47 @@ class TTSEngineManager:
     
     def synthesize(self, text, background=False):
         """Synthesize text using the current engine"""
+        # Auto-convert romanji to hiragana for all engines (not just PyOpenJTalk+)
+        # This ensures Japanese text works correctly with Piper, VoiceVox, etc.
+        converted_text = convert_romanji_to_hiragana(text)
+        if converted_text != text:
+            print(f"[TTS] Japanese conversion applied: '{text}' -> '{converted_text}'")
+            text = converted_text
+        
+        # Start timing for overall synthesis
+        synthesis_start = time.time()
+        
         if self.current_engine == "piper" and self.piper_instance:
+            print(f"[TTS] Starting Piper synthesis...")
             if IS_WINDOWS:
-                return self.piper_instance.synthesize(text, timeout=5.0)
+                result = self.piper_instance.synthesize(text, timeout=5.0)
             else:
-                return self.piper_instance.synthesize(text)
+                result = self.piper_instance.synthesize(text)
         elif self.current_engine == "voicevox" and self.voicevox_instance:
             # Use longer timeout for VoiceVox, especially on Linux where it can be slower
             voicevox_timeout = 20.0 if not IS_WINDOWS else 15.0
             print(f"[TTS] Starting VoiceVox synthesis with {voicevox_timeout}s timeout")
             result = self.voicevox_instance.synthesize(text, timeout=voicevox_timeout)
-            if result:
-                print(f"[TTS] VoiceVox synthesis completed successfully ({len(result)} bytes)")
-            else:
-                print(f"[TTS] VoiceVox synthesis failed or returned empty result")
-            return result
         elif self.current_engine == "openjtalk" and self.pyopenjtalk_plus_instance:
             print(f"[TTS] Starting PyOpenJTalk+ synthesis")
             result = self.pyopenjtalk_plus_instance.synthesize(text, timeout=10.0)
-            if result:
-                print(f"[TTS] PyOpenJTalk+ synthesis completed successfully ({len(result)} bytes)")
-            else:
-                print(f"[TTS] PyOpenJTalk+ synthesis failed or returned empty result")
-            return result
         else:
             print(f"[TTS] No active {self.current_engine} engine instance")
             return b''
+        
+        # Calculate and display timing
+        synthesis_time = time.time() - synthesis_start
+        
+        if result:
+            audio_length_seconds = len(result) / 2 / 22050  # Assuming 16-bit samples at 22050 Hz
+            realtime_factor = audio_length_seconds / synthesis_time if synthesis_time > 0 else 0
+            print(f"[TTS] {self.current_engine.upper()} synthesis completed in {synthesis_time:.3f}s")
+            print(f"[TTS] Generated {len(result)} bytes ({audio_length_seconds:.2f}s audio)")
+            print(f"[TTS] Real-time factor: {realtime_factor:.2f}x (higher is faster)")
+        else:
+            print(f"[TTS] {self.current_engine.upper()} synthesis failed after {synthesis_time:.3f}s")
+        
+        return result
     
     def set_voicevox_speaker(self, speaker_id):
         """Set VoiceVox speaker ID"""

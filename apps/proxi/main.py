@@ -14,9 +14,20 @@ class App(AppBase):
         self.draw = context["drawing"]  # New region-based drawing system
         self.current_engine = context["tts"]["get_engine"]
         self.context = context
+        
+        # Load both English and Japanese autocomplete words
         self.words = self.load_autocomplete_words(context["AUTOCOMPLETE_PATH"])
         self.autocomplete_words = self.load_autocomplete_words(context["AUTOCOMPLETE_PATH"])
         self.autocomplete_words.sort()
+        
+        # Load Japanese autocomplete words
+        japanese_path = context["AUTOCOMPLETE_PATH"].replace("autocomplete_words.txt", "autocomplete_words_japanese.txt")
+        self.japanese_autocomplete_words = self.load_autocomplete_words(japanese_path)
+        self.japanese_autocomplete_words.sort()
+        
+        print(f"[Proxi] Loaded {len(self.autocomplete_words)} English autocomplete words")
+        print(f"[Proxi] Loaded {len(self.japanese_autocomplete_words)} Japanese autocomplete words")
+        
         self.currentline = ""
         self.current_suggestion = ""
         
@@ -151,22 +162,29 @@ class App(AppBase):
         
         # Check if we have Japanese romanji preview to show
         romanji_y = help_y
-        if self.is_japanese_detected and self.romanji_preview and self.current_engine == "openjtalk":
-            # Show romanji preview above help text using default font
-            preview_text = f"JP: {self.romanji_preview}"
+        if self.is_japanese_detected and self.romanji_preview:
+            # Show romanji preview above help text using default font with proper wrapping
+            preview_text = f"{self.romanji_preview}"
             font_default = self.context["fonts"]["default"]  # Use default font for Japanese text
             
-            # Check if preview fits on screen
-            if help_y + line_height + 8 <= self.height - 2:
-                # Calculate centered position for preview using default font
-                preview_width = self.context["get_text_size"](preview_text, font_default)[0]
-                preview_x = (self.width - preview_width) // 2
+            # Calculate proper line height for the Japanese default font
+            japanese_line_height = self.context["get_text_size"]("あ", font_default)[1] + 1  # Get height of Japanese character + spacing
+            
+            # Wrap the Japanese preview text just like normal text
+            available_width = self.width - self.padding * 2
+            wrapped_preview_lines = self.wrap_text(preview_text, font_default, available_width)
+            
+            # Check if preview fits on screen using proper Japanese line height
+            preview_height_needed = len(wrapped_preview_lines) * japanese_line_height
+            if help_y + preview_height_needed + line_height + 4 <= self.height - 2:
+                # Draw each line of wrapped Japanese preview
+                for i, preview_line in enumerate(wrapped_preview_lines):
+                    preview_line_y = help_y + i * japanese_line_height
+                    # Draw inverted text (white background, black text) for Japanese preview
+                    self.draw["draw_text_inverted"](preview_line, self.padding, preview_line_y, font_default)
                 
-                # Draw text on background using default font
-                _, height = self.draw["draw_text_inverted"](preview_text, preview_x, help_y, font_default)
-                
-                # Move help text down
-                romanji_y = help_y + height + 4
+                # Move help text down by the height of all preview lines plus spacing
+                romanji_y = help_y + preview_height_needed + 4
 
         # Draw main help text
         if romanji_y + line_height <= self.height - 2:
@@ -304,9 +322,16 @@ class App(AppBase):
         last_word = current_text.split(' ')[-1].lower()
         if not last_word:  # Extra safety check
             return ""
-        i = bisect.bisect_left(self.autocomplete_words, last_word)
-        while i < len(self.autocomplete_words) and self.autocomplete_words[i].startswith(last_word):
-            candidate = self.autocomplete_words[i]
+        
+        # Choose the appropriate word list based on Japanese detection
+        if self.is_japanese_detected:
+            word_list = self.japanese_autocomplete_words
+        else:
+            word_list = self.autocomplete_words
+        
+        i = bisect.bisect_left(word_list, last_word)
+        while i < len(word_list) and word_list[i].startswith(last_word):
+            candidate = word_list[i]
             suggestion = candidate[len(last_word):]
             if suggestion:  # Make sure we have a non-empty suggestion
                 return suggestion

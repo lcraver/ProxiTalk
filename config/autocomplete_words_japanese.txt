@@ -1,0 +1,325 @@
+watashi
+anata
+kare
+kanojo
+watashitachi
+anatatachi
+karera
+kore
+sore
+are
+koko
+soko
+asoko
+desu
+masu
+deshita
+mashita
+arigatou
+arigatou gozaimasu
+sumimasen
+gomen
+gomen nasai
+konnichiwa
+ohayou
+ohayou gozaimasu
+konbanwa
+sayounara
+mata ashita
+oyasumi
+oyasumi nasai
+hajimemashite
+yoroshiku
+yoroshiku onegaishimasu
+genki
+genki desu
+genki deshita
+suki
+suki desu
+kirai
+kirai desu
+oishi
+oishi desu
+tanoshii
+tanoshii desu
+ureshii
+ureshii desu
+kanashii
+kanashii desu
+atatakai
+atatakai desu
+samui
+samui desu
+atsui
+atsui desu
+suzushii
+suzushii desu
+takusan
+sukoshi
+ookii
+chiisai
+nagai
+mijikai
+takai
+yasui
+akarui
+kurai
+hayai
+osoi
+yasashii
+muzukashii
+kantan
+omoshiroi
+tsumaranai
+shinsetsu
+shinsetsu na
+rippa
+rippa na
+kirei
+kirei na
+kireina
+utsukushii
+utsukushii desu
+pen
+hon
+mizu
+gohan
+asa gohan
+hiru gohan
+ban gohan
+neko
+inu
+tori
+sakana
+kuruma
+densha
+hikouki
+takushii
+jitensha
+ie
+uchi
+gakkou
+kaisha
+mise
+byouin
+ginkou
+yuubinkyoku
+eki
+kuukou
+hoteru
+resutoran
+kissaten
+toshokan
+kouen
+nani
+nani desu
+nani desu ka
+dare
+dare desu
+dare desu ka
+doko
+doko desu
+doko desu ka
+itsu
+itsu desu
+itsu desu ka
+naze
+naze desu
+naze desu ka
+doushite
+doushite desu
+doushite desu ka
+ikura
+ikura desu
+ikura desu ka
+ikutsu
+ikutsu desu
+ikutsu desu ka
+dou
+dou desu
+dou desu ka
+douzo
+douzo yoroshiku
+chotto
+chotto matte
+matte kudasai
+onegaishimasu
+kudasai
+arigato gozaimasu
+douitashimashite
+sumimasen ga
+shitsurei shimasu
+shitsurei itashimasu
+irasshaimase
+gochisousama
+gochisousama deshita
+itadakimasu
+tadaima
+okaeri
+okaeri nasai
+itterasshai
+itte kimasu
+taberu
+tabemasu
+tabemashita
+nomu
+nomimasu
+nomimashita
+miru
+mimasu
+mimashita
+kiku
+kikimasu
+kikimashita
+hanasu
+hanashimasu
+hanashimashita
+yomu
+yomimasu
+yomimashita
+kaku
+kakimasu
+kakimashita
+iku
+ikimasu
+ikimashita
+kuru
+kimasu
+kimashita
+kaeru
+kaerimasu
+kaerimashita
+neru
+nemasu
+nemashita
+okiru
+okimasu
+okimashita
+hataraku
+hatarakimasu
+hatarakimashita
+benkyou suru
+benkyou shimasu
+benkyou shimashita
+asobu
+asobimasu
+asobimashita
+yasumu
+yasumimasu
+yasumimashita
+kaimono suru
+kaimono shimasu
+kaimono shimashita
+ryokou suru
+ryokou shimasu
+ryokou shimashita
+unten suru
+unten shimasu
+unten shimashita
+denwa suru
+denwa shimasu
+denwa shimashita
+shashin wo toru
+shashin wo torimasu
+shashin wo torimashita
+ongaku wo kiku
+ongaku wo kikimasu
+ongaku wo kikimashita
+terebi wo miru
+terebi wo mimasu
+terebi wo mimashita
+geemu wo suru
+geemu wo shimasu
+geemu wo shimashita
+eiga wo miru
+eiga wo mimasu
+eiga wo mimashita
+hon wo yomu
+hon wo yomimasu
+hon wo yomimashita
+nihongo
+nihongo wo benkyou shimasu
+eigo
+eigo wo benkyou shimasu
+furansugo
+doitsugo
+supeingo
+chuugokugo
+kankokugo
+gakusei
+sensei
+tomodachi
+kazoku
+chichi
+haha
+ani
+ane
+otouto
+imouto
+sofu
+sobo
+otto
+tsuma
+kodomo
+musuko
+musume
+nihon
+amerika
+igirisu
+furansu
+doitsu
+itaria
+supein
+chuugoku
+kankoku
+oosutoraria
+kanada
+burajiru
+mekishiko
+indo
+indoneshia
+tai
+betonamu
+firipin
+shigunaru
+mareeshia
+roku gatsu
+shichi gatsu
+hachi gatsu
+ku gatsu
+juu gatsu
+juuichi gatsu
+juuni gatsu
+getsu youbi
+ka youbi
+sui youbi
+moku youbi
+kin youbi
+do youbi
+nichi youbi
+asa
+hiru
+yoru
+ban
+kyou
+kinou
+ashita
+raishuu
+senshuu
+raigetsu
+sengetsu
+rainen
+kyonen
+ima
+sugu
+mou
+mada
+itsumo
+tokidoki
+amari
+zenzen
+totemo
+taihen
+hontou ni
+tabun
+kitto

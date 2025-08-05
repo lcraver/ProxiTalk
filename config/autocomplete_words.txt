@@ -1,503 +1,976 @@
-time
-year
-people
-good
-know
-just
-take
-think
-come
-look
-want
-give
-find
-tell
-work
-call
-need
-feel
-help
-talk
-turn
-move
-like
-live
-show
-mean
-keep
-make
-play
-read
-write
-walk
-stop
-stay
-wait
-love
-hope
-pass
-grow
-open
-close
-send
-hold
-join
-pick
-carry
-catch
-drive
-ride
-push
-pull
-break
-build
-teach
-learn
-spend
-begin
-start
-watch
-leave
-enter
-run
-win
-lose
-fail
-rise
-fall
-climb
-plan
-share
-lead
-follow
-meet
-face
-agree
-fight
-serve
-rule
-care
-miss
-drop
-enjoy
-risk
-cross
-count
-check
-reach
-guess
-worry
-smile
-laugh
-cry
-shout
-speak
-dream
-sleep
-wake
-raise
-throw
-shoot
-swing
-hang
-blow
-burn
-draw
-paint
-sing
-dance
-cook
-bake
-boil
-fry
-wash
-clean
-feed
-pour
-drink
-bite
-lick
-jump
-roll
-slide
-fly
-land
-rest
-wish
-pray
-beg
-bring
-grab
-steal
-rob
-hit
-beat
-kill
-hurt
-fear
-scream
-whisper
-say
-answer
-reply
-explain
-hide
-lock
-unlock
-slice
-sew
-print
-copy
-paste
-type
-study
-test
-remember
-forget
-imagine
-create
-destroy
-change
-arrive
-return
-travel
-visit
-swim
-sail
-act
-listen
-hear
-see
-notice
-observe
-touch
-smell
-taste
-buy
-sell
-cost
-earn
-waste
-borrow
-lend
-owe
-own
-bet
-vote
-guide
-quit
-finish
-continue
-succeed
-shrink
-light
-dark
-heavy
-small
-large
-long
-short
-slow
-fast
-cold
-cool
-warm
-near
-early
-late
-soon
-again
-never
-always
-often
-sometimes
-maybe
-really
-very
-quite
-almost
-enough
-also
-only
-still
+absolutely
+according
+actually
+afternoon
+against
 already
-even
-either
-neither
-both
-each
-every
-some
-most
-many
-few
-more
-less
-such
-other
+although
+amazing
 another
-same
+anything
+anywhere
+application
+appreciate
+around
+article
+assistant
+available
+awesome
+background
+beautiful
+because
+become
+before
+believe
+between
+business
+camera
+cannot
+certainly
+change
+character
+checking
+choose
+classic
+clearly
+climate
+clothes
+coffee
+collect
+comfortable
+comment
+community
+company
+complete
+computer
+concept
+consider
+continue
+control
+conversation
+corner
+correct
+create
+current
+decision
+definitely
+delicious
+describe
+develop
 different
-high
-hard
-easy
-strong
-weak
-right
-wrong
-true
-false
+difficult
+digital
+dinner
+directly
+discover
+discussion
+document
+during
+easily
+either
+element
+energy
+engineering
+enough
+especially
+everything
+example
+excellent
+exciting
+exercise
+experience
+explain
+explore
+extremely
+family
+famous
+fantastic
+feature
+feeling
+finally
+forget
+friend
+function
+funny
+future
+garden
+general
+getting
+government
+great
+grocery
+ground
+growing
 happy
-sad
-angry
-afraid
-glad
-sorry
-able
-area
-back
-base
-body
-book
-city
-door
-down
-east
-face
-fact
-farm
-fast
-fear
-feel
-file
-fill
-film
-fine
-fire
-firm
-fish
-food
-foot
-form
-free
-from
-game
-girl
-goal
-good
-gray
-grow
-hair
-half
-hall
-hand
-hang
-hard
-have
-head
-hear
-help
-here
-high
-hill
-hold
-home
-hope
-hour
-huge
-idea
-join
-jump
-keep
-kind
-king
-know
-land
-last
-late
-lead
-left
-life
-lift
-like
-line
-list
-live
-load
-long
-look
-lose
-loss
-love
-main
-make
-male
-many
-mark
-mass
-mean
-meet
-menu
-mile
-mind
-mine
-miss
-move
-much
-must
-name
-near
-need
-news
-next
-nice
-none
-note
-okay
-once
-open
-over
-page
-pain
-pair
-park
-part
-pass
-past
-pick
-plan
-play
-plus
-pool
-poor
-port
-pull
-push
-race
-rain
-read
-real
-rest
-rice
-rich
-ride
-ring
-rise
-risk
-road
-rock
-roll
-roof
-room
-root
-rule
-rush
-safe
-save
-seat
-seed
-seek
-seem
-sell
-send
-shop
-show
-shut
-sick
-side
-sign
-sing
-sink
-site
-size
-skin
-slow
-snow
-soft
-soil
-some
-song
-soon
-sort
-soul
-spot
-stay
-step
-stop
-such
-suit
-sure
-take
-talk
-tall
-task
-team
-tell
-test
-than
-that
-them
-then
-they
-thin
+health
+helpful
+history
+holiday
+hopefully
+however
+hundred
+important
+improve
+include
+increase
+indeed
+information
+instead
+interest
+internet
+interview
+issue
+itself
+journey
+keeping
+kitchen
+knowledge
+language
+large
+later
+learn
+least
+level
+light
+listen
+little
+living
+local
+machine
+manager
+market
+material
+matter
+maybe
+meaning
+medical
+meeting
+memory
+mention
+message
+method
+middle
+might
+minute
+mobile
+modern
+moment
+money
+morning
+mother
+mountain
+movie
+music
+natural
+nature
+necessary
+network
+never
+night
+nothing
+notice
+number
+object
+obvious
+office
+often
+online
+operation
+option
+order
+organization
+original
+other
+outside
+overall
+package
+paper
+parent
+particular
+party
+people
+perfect
+perhaps
+period
+person
+personal
+phone
+photo
+picture
+piece
+place
+please
+point
+popular
+position
+possible
+power
+practice
+present
+pretty
+price
+probably
+problem
+process
+product
+program
+project
+provide
+public
+purpose
+quality
+question
+quickly
+quite
+rather
+reach
+really
+reason
+recent
+recognize
+recommend
+record
+region
+regular
+relationship
+remember
+report
+represent
+require
+research
+resource
+respect
+response
+result
+return
+right
+safety
+scale
+science
+screen
+search
+season
+second
+section
+security
+sense
+serious
+service
+several
+share
+short
+should
+simple
+since
+situation
+small
+social
+society
+software
+solution
+someone
+something
+sometimes
+space
+special
+specific
+spend
+standard
+start
+statement
+still
+story
+strategy
+strong
+structure
+study
+stuff
+style
+subject
+success
+suggest
+support
+system
+table
+technology
+television
+terms
+thank
+their
+theme
+there
+these
 thing
-this
-thus
+think
+those
+though
+three
+through
 time
-tiny
-told
-took
-tool
-tour
-town
-tree
-trip
-true
-turn
-type
-unit
-upon
-user
-very
-view
-vote
-wait
-walk
-wall
-want
-warm
-wash
-wave
-ways
-weak
-wear
-week
-well
-west
-what
-when
-whom
-wide
-wife
-wild
-will
-wind
-wine
-wing
-wish
-with
-wood
-word
-wore
-work
-yard
-yeah
-year
-your
-zone
-hello
-lilian
-pidge
-steph
-gwen
-imogen
+today
+together
+tomorrow
+total
+travel
+trouble
+truth
+trying
+understand
+university
+update
+usually
+value
+various
+video
+visit
+voice
+water
+website
+weight
+welcome
+where
+which
+while
+whole
+without
+wonderful
+words
+world
+would
+write
+years
+yourself
+adventure
+afternoon
+amazing
+announcement
+application
+appointment
+appreciate
+approach
+architect
+around
+article
+artificial
+assistance
+attention
+attitude
+available
+background
+beautiful
+beginning
+behavior
+benefit
+between
+brilliant
+business
+calculate
+campaign
+capacity
+category
+celebrate
+certainly
+challenge
+character
+chocolate
+christmas
+classical
+classroom
+colleague
+collection
+comfortable
+commercial
+committee
+community
+competition
+completely
+component
+computer
+concentrate
+condition
+confidence
+connection
+consideration
+construction
+container
+continue
+contribution
+conversation
+creativity
+criticism
+customer
+dangerous
+database
+decision
+definitely
+delivery
+department
+description
+development
+different
+difficulty
+dimension
+direction
+discussion
+distribution
+document
+downtown
+education
+effective
+efficient
+electronic
+emergency
+employee
+engineering
+entertainment
+environment
+equipment
+especially
+establishment
+everything
+examination
+excellent
+exception
+excitement
+executive
+experience
+experiment
+explanation
+expression
+extension
+extraordinary
+facility
+fantastic
+fashion
+feature
+feedback
+festival
+finally
+financial
+formation
+foundation
+frequency
+function
+fundamental
+furniture
+generation
+government
+graduation
+grocery
+guidance
+happiness
+hardware
+headline
+healthcare
+historical
+holiday
+hopefully
+hospital
+however
+illustration
+imagination
+immediately
+implementation
+important
+improvement
+independence
+individual
+industrial
+information
+innovation
+inspiration
+installation
+instruction
+instrument
+intelligence
+interaction
+interface
+international
+internet
+interview
+introduction
+investigation
+investment
+invitation
+javascript
+knowledge
+laboratory
+landscape
+language
+leadership
+library
+lifestyle
+literature
+location
+machine
+magazine
+maintenance
+management
+marketing
+material
+mathematics
+maximum
+measurement
+mechanism
+medicine
+membership
+memorial
+message
+midnight
+minimum
+minster
+mission
+mistake
+mobile
+moderate
+modification
+monitor
+morning
+motivation
+mountain
+movement
+multimedia
+museum
+musical
+naturally
+navigation
+necessary
+negative
+neighborhood
+network
+newspaper
+nothing
+notification
+objective
+observation
+obviously
+occupation
+operation
+opportunity
+opposite
+optimization
+optional
+organization
+original
+outcome
+outstanding
+overview
+package
+painting
+parameter
+parking
+particular
+partnership
+password
+patient
+pattern
+payment
+perfect
+performance
+perhaps
+period
+permission
+personal
+perspective
+philosophy
+photograph
+physical
+picture
+platform
+please
+politics
+popular
+population
+position
+positive
+possible
+potential
+practice
+preference
+premium
+preparation
+presentation
+president
+pressure
+previous
+primary
+principle
+priority
+privacy
+probably
+problem
+procedure
+process
+professional
+program
+project
+property
+proposal
+protection
+provide
+psychology
+publication
+purpose
+quality
+question
+quickly
+random
+rather
+reaction
+really
+reason
+receipt
+recognition
+recommendation
+recording
+recovery
+reference
+reflection
+regarding
+register
+regulation
+relationship
+reliable
+remember
+replacement
+report
+representative
+reputation
+request
+requirement
+research
+reservation
+resolution
+resource
+respect
+response
+responsibility
+restaurant
+restriction
+result
+retirement
+revenue
+review
+revolution
+safety
+satisfaction
+schedule
+science
+screen
+search
+season
+second
+section
+security
+selection
+sense
+sequence
+serious
+service
+session
+settlement
+several
+shopping
+should
+signature
+significant
+similar
+simple
+simulation
+since
+situation
+smartphone
+social
+society
+software
+solution
+someone
+something
+sometimes
+sophisticated
+source
+space
+speaker
+special
+specific
+standard
+station
+statistic
+storage
+strategy
+structure
+student
+style
+subject
+subscription
+success
+sufficient
+suggestion
+summary
+support
+surface
+surprise
+survey
+system
+table
+target
+teacher
+technical
+technology
+telephone
+television
+temperature
+territory
+thanks
+theater
+theory
+therefore
+thinking
+though
+thought
+through
+ticket
+tonight
+total
+tourist
+towards
+traffic
+training
+transaction
+transfer
+transformation
+transition
+translation
+transportation
+treatment
+trouble
+understanding
+unique
+university
+update
+upgrade
+usually
+vacation
+valuable
+vehicle
+version
+video
+village
+virtual
+visit
+visual
+voice
+volume
+warning
+website
+wedding
+weekend
+welcome
+western
+whatever
+wherever
+whether
+which
+while
+white
+whole
+whose
+willing
+window
+wisdom
+without
+wonderful
+working
+workshop
+world
+would
+write
+written
+yellow
+yesterday
+yourself
+how are you
+thank you
+you're welcome
+excuse me
+I'm sorry
+nice to meet you
+good morning
+good afternoon
+good evening
+good night
+see you later
+take care
+have a good day
+have a great time
+what's up
+how's it going
+long time no see
+it's nice to see you
+pleased to meet you
+my name is
+I would like
+could you please
+would you mind
+I don't know
+I understand
+I think so
+I hope so
+of course
+no problem
+that's right
+that's correct
+I agree
+I disagree
+what do you think
+in my opinion
+as far as I know
+by the way
+speaking of which
+let me know
+keep in touch
+stay safe
+take it easy
+good luck
+congratulations
+happy birthday
+merry christmas
+happy new year
+I love you
+I miss you
+how much does it cost
+where is the
+what time is it
+I need help
+can you help me
+I'm looking for
+I'm interested in
+I would prefer
+it depends
+that sounds good
+that works for me
+I'm not sure
+let me think about it
+I'll get back to you
+talk to you soon
+catch you later
+it's been a pleasure
+thanks for your time
+I appreciate it
+you're very kind
+that's very thoughtful
+I'm grateful
+how wonderful
+that's amazing
+I'm excited
+I can't wait
+looking forward to it
+what a surprise
+that's incredible
+I'm impressed
+well done
+keep up the good work
+you did great
+I'm proud of you
+don't worry
+it's okay
+everything will be fine
+hang in there
+cheer up
+feel better soon
+get well soon
+I'm here for you
+you can do it
+believe in yourself
+never give up
+follow your dreams
+make it happen
+go for it
+why not
+sounds like fun
+count me in
+I'm in
+let's do it
+absolutely not
+no way
+forget about it
+I changed my mind
+on second thought
+I have an idea
+that reminds me
+come to think of it
+now that you mention it
+as a matter of fact
+to be honest
+frankly speaking
+between you and me
+just between us
+keep it quiet
+don't tell anyone
+it's a secret
+I promise
+I swear
+trust me
+believe me
+take my word for it
+you have my word
+I give you my word
+cross my heart
+I'm serious
+I mean it
+I'm not kidding
+no joke
+for real
+I'm telling the truth
+honestly
+seriously
+without a doubt
+definitely yes
+absolutely yes
+for sure
+certainly
+of course not
+absolutely not
+definitely not
+no doubt about it
+there's no question
+that's for sure
+you can count on it
+I guarantee it
+mark my words
+time will tell
+we'll see
+it remains to be seen
+only time will tell
+anything is possible
+you never know
+who knows
+your guess is as good as mine
+I have no idea
+I haven't the faintest idea
+I don't have a clue
+beats me
+search me
+how should I know
+don't ask me
+I'm clueless
+I'm stumped
+I'm at a loss
+I'm confused
+I don't get it
+I don't understand
+could you explain
+what do you mean
+I'm not following
+run that by me again
+come again
+pardon me
+what was that
+I didn't catch that
+could you repeat that
+speak up please
+I can't hear you
+you're breaking up
+bad connection
+can you hear me now
+loud and clear

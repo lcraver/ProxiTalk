@@ -165,12 +165,26 @@ def detect_and_convert_romanji(text):
     common_english_words = ['hello', 'world', 'thank', 'you', 'the', 'and', 'but', 'with', 'have', 'this', 'that', 'from', 'they', 'know', 'want', 'been', 'good', 'much', 'some', 'time', 'very', 'when', 'come', 'here', 'just', 'like', 'long', 'make', 'many', 'over', 'such', 'take', 'than', 'them', 'well', 'were', 'what']
     has_english_words = any(word in text_lower for word in common_english_words)
     
+    # Check if individual words look like romanji (for spaced romanji text)
+    words = text_lower.split()
+    romanji_word_count = 0
+    for word in words:
+        # Check if word contains romanji syllables or is in our romanji map
+        word_syllable_matches = sum(1 for indicator in syllable_indicators if indicator in word)
+        if word in romanji_map or word_syllable_matches >= 1:
+            romanji_word_count += 1
+    
+    # Calculate romanji word ratio
+    romanji_word_ratio = romanji_word_count / len(words) if words else 0
+    
     # Determine if text is likely romanji
     if has_strong_indicator:
         is_likely_romanji = True
     elif has_english_words:
         is_likely_romanji = False  # Don't convert obvious English
-    elif syllable_matches >= 2 and len(text_lower.split()) <= 3:  # Multiple syllables in short text
+    elif syllable_matches >= 2 and len(words) <= 3:  # Multiple syllables in short text
+        is_likely_romanji = True
+    elif romanji_word_ratio >= 0.5 and syllable_matches >= 2:  # At least half the words look like romanji
         is_likely_romanji = True
     else:
         is_likely_romanji = False
@@ -205,7 +219,13 @@ def convert_romanji_to_hiragana(text):
     if is_japanese and converted_text:
         print(f"[Japanese] Detected romanji text: '{text}'")
         print(f"[Japanese] Converted to hiragana: '{converted_text}'")
-        return converted_text
+        
+        # Remove spaces from converted Japanese text for TTS synthesis
+        # Japanese TTS engines typically work better without spaces
+        converted_text_no_spaces = converted_text.replace(' ', '')
+        print(f"[Japanese] Removed spaces for TTS: '{converted_text_no_spaces}'")
+        
+        return converted_text_no_spaces
     return text
 
 
