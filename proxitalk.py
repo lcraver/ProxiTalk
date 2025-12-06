@@ -80,9 +80,15 @@ else:
     import evdev
     from evdev import InputDevice, categorize, ecodes
 
+
 if IS_WINDOWS:
     import ctypes
     from ctypes import wintypes
+
+    # Icon filenames are checked in order so users can drop in custom art
+    EMULATOR_ICON_FILENAMES = (
+        "emulator_icon.png",
+    )
 
     class EmulatedDisplay:
         def __init__(self, width, height, scale=4):
@@ -100,7 +106,8 @@ if IS_WINDOWS:
             # Debug overlay for region updates
             self._debug_regions = []
             self._debug_overlay_duration = 1/20 * 5  # Show overlay for 5 frames at 20 FPS
-            self._show_debug_overlay = True  # Toggle this to enable/disable debug overlay
+            self._show_debug_overlay = False  # Toggle this to enable/disable debug overlay
+            self._icon_surface = None
             
             # Window focus tracking
             self._window_focused = True
@@ -171,6 +178,28 @@ if IS_WINDOWS:
                         'timestamp': time.time()
                     })
 
+        def _load_window_icon(self):
+            """Load the custom emulator icon once and cache the pygame surface."""
+            if self._icon_surface is not None:
+                return self._icon_surface
+
+            for filename in EMULATOR_ICON_FILENAMES:
+                icon_path = os.path.join(ICON_DIR, filename)
+                if not os.path.isfile(icon_path):
+                    continue
+                try:
+                    surface = pygame.image.load(icon_path)
+                    # Normalize icon size for best OS compatibility
+                    if surface.get_width() != 32 or surface.get_height() != 32:
+                        surface = pygame.transform.smoothscale(surface, (32, 32))
+                    self._icon_surface = surface
+                    print(f"[Display] Emulator icon loaded: {icon_path}")
+                    break
+                except Exception as exc:
+                    print(f"[Display] Failed to load emulator icon '{icon_path}': {exc}")
+
+            return self._icon_surface
+
         def _run_pygame_loop(self):
             import time  # Import time module for timestamp calculations
             try:
@@ -179,6 +208,18 @@ if IS_WINDOWS:
                 pygame.init()
                 self.screen = pygame.display.set_mode((self.width * self.scale, self.height * self.scale))
                 pygame.display.set_caption("ProxiTalk Emulated Display")
+                icon_surface = self._load_window_icon()
+                if icon_surface:
+                    try:
+                        # Match display pixel format for crisp rendering
+                        if icon_surface.get_alpha() is not None:
+                            icon_surface = icon_surface.convert_alpha()
+                        else:
+                            icon_surface = icon_surface.convert()
+                        self._icon_surface = icon_surface
+                        pygame.display.set_icon(icon_surface)
+                    except Exception as exc:
+                        print(f"[Display] Failed to apply emulator icon: {exc}")
                 clock = pygame.time.Clock()
                 last_surface = None  # Keep track of the last displayed surface
                 

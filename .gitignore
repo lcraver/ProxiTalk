@@ -188,3 +188,5 @@ config/discourse_login.conf
 # Discourse chat session cache files (contain authentication tokens)
 apps/discourse_chat/session_cache.json
 **/session_cache.json
+apps/pt_browser/visited_pages/*.html
+apps/video_player/temp_audio.wav
