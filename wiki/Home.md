@@ -7,9 +7,9 @@ A ProxiTalk is any device running the ProxiTalk OS, which is designed to create 
 Please refer to the guides in the sidebar of the wiki!
 
 ## Build Guides
-- [Build - 1. Shopping List](/Build---1.-Shopping-List) - Everything you need to purchase to build your ProxiTalk
-- [Build - 2. Guide](/Build---2.-Guide) - Step-by-step assembly instructions
-- [Build - 3. Software Install](/Build---3.-Software-Install) - Setting up the software on your device
+- [Build - 1. Shopping List](https://github.com/lcraver/ProxiTalk/wiki/Build---1.-Shopping-List) - Everything you need to purchase to build your ProxiTalk
+- [Build - 2. Guide](https://github.com/lcraver/ProxiTalk/wiki/Build---2.-Guide) - Step-by-step assembly instructions
+- [Build - 3. Software Install](https://github.com/lcraver/ProxiTalk/wiki/Build---3.-Software-Install) - Setting up the software on your device
 
 ## Development
 - [Development - Apps](/Development---Apps) - Guide for developing applications for ProxiTalk
