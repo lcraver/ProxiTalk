@@ -10,6 +10,10 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 class App(AppBase):
+    VOICEVOX_ENGINE_ID = "voicevox"
+    PIPER_ENGINE_ID = "piper"
+    OPENJTALK_ENGINE_ID = "openjtalk"
+
     def __init__(self, context):
         super().__init__(context)
         self.name = "TTS Settings"
@@ -84,6 +88,25 @@ class App(AppBase):
         self.in_submenu = False
         self.submenu_type = None
 
+    # --- Generic TTS manager helpers --- #
+    def _get_engine_api(self, engine_id):
+        try:
+            return self.context["tts"]["get_engine_api"](engine_id) or {}
+        except Exception:
+            return {}
+
+    def _call_engine_api(self, method_name, *args, engine_id=None, default=None, **kwargs):
+        target_engine = engine_id or self.current_engine
+        api = self._get_engine_api(target_engine)
+        func = api.get(method_name)
+        if not func:
+            return default
+        try:
+            return func(*args, **kwargs)
+        except Exception as exc:
+            print(f"[TTS Settings] Failed to call {method_name} on {target_engine}: {exc}")
+            return default
+
     def find_current_pyopenjtalk_voice_position(self, current_voice):
         """Find the character and style indices for current PyOpenJTalk+ voice"""
         if not current_voice or not self.pyopenjtalk_grouped_voices:
@@ -122,11 +145,15 @@ class App(AppBase):
     def load_voicevox_speakers(self):
         """Load VoiceVox speakers with names from the API (now cached)"""
         try:
-            # Get the structured voice data (now from cache)
-            voice_data = self.context["tts"]["get_voicevox_speakers"]()
-            # Also get the flat list for compatibility (now from cache)
-            self.voicevox_speakers = self.context["tts"]["get_voicevox_speakers_flat"](
-            )
+            voice_data = self._call_engine_api(
+                "list_voices",
+                engine_id=self.VOICEVOX_ENGINE_ID,
+            ) or []
+            flat_list = self._call_engine_api(
+                "list_voice_variants",
+                engine_id=self.VOICEVOX_ENGINE_ID,
+            ) or []
+            self.voicevox_speakers = flat_list
 
             if voice_data:
                 self.voicevox_voices = voice_data
@@ -155,8 +182,14 @@ class App(AppBase):
     def load_piper_models(self):
         """Load available Piper models"""
         try:
-            self.piper_models = self.context["tts"]["get_piper_models"]()
-            current_model = self.context["tts"]["get_current_piper_model"]()
+            self.piper_models = self._call_engine_api(
+                "list_models",
+                engine_id=self.PIPER_ENGINE_ID,
+            ) or []
+            current_model = self._call_engine_api(
+                "get_current_model",
+                engine_id=self.PIPER_ENGINE_ID,
+            )
             
             if self.piper_models:
                 print(f"[TTS Settings] Loaded {len(self.piper_models)} Piper models")
@@ -182,8 +215,14 @@ class App(AppBase):
     def load_pyopenjtalk_voices(self):
         """Load available PyOpenJTalk+ voices and group them by character"""
         try:
-            raw_voices = self.context["tts"]["get_pyopenjtalk_plus_voices"]()
-            current_voice = self.context["tts"]["get_current_pyopenjtalk_plus_voice"]()
+            raw_voices = self._call_engine_api(
+                "list_voices",
+                engine_id=self.OPENJTALK_ENGINE_ID,
+            ) or []
+            current_voice = self._call_engine_api(
+                "get_current_voice",
+                engine_id=self.OPENJTALK_ENGINE_ID,
+            )
             
             # Group voices by character name (extract character from filename)
             self.pyopenjtalk_grouped_voices = []  # List of voice groups
@@ -304,7 +343,7 @@ class App(AppBase):
 
         # Piper model info if applicable
         elif self.current_engine == "piper":
-            current_model = self.context["tts"]["get_current_piper_model"]()
+            current_model = self._call_engine_api("get_current_model", engine_id=self.PIPER_ENGINE_ID)
             if current_model:
                 model_name = os.path.basename(current_model).replace('.onnx', '')
                 model_width, _ = self.context["drawing"]["draw_text_inverted"](
@@ -314,7 +353,7 @@ class App(AppBase):
 
         # PyOpenJTalk+ voice info if applicable
         elif self.current_engine == "openjtalk":
-            current_voice = self.context["tts"]["get_current_pyopenjtalk_plus_voice"]()
+            current_voice = self._call_engine_api("get_current_voice", engine_id=self.OPENJTALK_ENGINE_ID)
             if current_voice:
                 voice_name = current_voice.replace('.htsvoice', '')
                 voice_width, _ = self.context["drawing"]["draw_text_inverted"](
@@ -679,7 +718,10 @@ class App(AppBase):
                     
                     # Show status indicators
                     status = ""
-                    current_model = self.context["tts"]["get_current_piper_model"]()
+                    current_model = self._call_engine_api(
+                        "get_current_model",
+                        engine_id=self.PIPER_ENGINE_ID,
+                    )
                     if model['path'] == current_model:
                         status += " *"
                     if not model['exists']:
@@ -811,7 +853,10 @@ class App(AppBase):
                         prefix = ""
 
                         # Check if this style is currently active
-                        current_voice = self.context["tts"]["get_current_pyopenjtalk_plus_voice"]()
+                        current_voice = self._call_engine_api(
+                            "get_current_voice",
+                            engine_id=self.OPENJTALK_ENGINE_ID,
+                        )
                         status = ""
                         if current_voice and current_voice == style['filename']:
                             status = " *"
@@ -922,7 +967,10 @@ class App(AppBase):
                     # Use cached data, optionally refresh if needed
                     if not self.voicevox_voices:
                         print("[TTS Settings] No cached voices, refreshing...")
-                        self.context["tts"]["refresh_voicevox_speakers"]()
+                        self._call_engine_api(
+                            "refresh_voices",
+                            engine_id=self.VOICEVOX_ENGINE_ID,
+                        )
                         self.load_voicevox_speakers()
                     # Reset scroll offset when entering voice selection
                     self.voice_scroll_offset = 0
@@ -1163,7 +1211,10 @@ class App(AppBase):
                         # If switching to VoiceVox, ensure cache is fresh
                         if new_engine == "voicevox":
                             # Refresh cache and reload speakers
-                            self.context["tts"]["refresh_voicevox_speakers"]()
+                            self._call_engine_api(
+                                "refresh_voices",
+                                engine_id=self.VOICEVOX_ENGINE_ID,
+                            )
                             self.load_voicevox_speakers()
                             # Reset to first voice and style if available
                             if self.voicevox_voices:
@@ -1193,7 +1244,11 @@ class App(AppBase):
                 if self.piper_models and self.current_piper_model_index < len(self.piper_models):
                     selected_model = self.piper_models[self.current_piper_model_index]
                     if selected_model['exists']:
-                        if self.context["tts"]["set_piper_model"](selected_model['path']):
+                        if self._call_engine_api(
+                            "set_model",
+                            selected_model['path'],
+                            engine_id=self.PIPER_ENGINE_ID,
+                        ):
                             print(f"[TTS Settings] Changed Piper model to: {selected_model['name']}")
                             # Refresh the model list to update current model status
                             self.load_piper_models()
@@ -1219,7 +1274,11 @@ class App(AppBase):
                         selected_style = current_character['styles'][self.current_pyopenjtalk_style_index]
                         
                         if selected_style['exists']:
-                            if self.context["tts"]["set_pyopenjtalk_plus_voice"](selected_style['filename']):
+                            if self._call_engine_api(
+                                "set_voice",
+                                selected_style['filename'],
+                                engine_id=self.OPENJTALK_ENGINE_ID,
+                            ):
                                 print(f"[TTS Settings] Changed PyOpenJTalk+ voice to: {current_character['name']} ({selected_style['name']})")
                                 # Refresh the voice list to update current voice status
                                 self.load_pyopenjtalk_voices()
@@ -1250,8 +1309,11 @@ class App(AppBase):
                     new_speaker_id = selected_style['id']
 
                     if new_speaker_id != self.voicevox_speaker_id:
-                        self.context["tts"]["set_voicevox_speaker"](
-                            new_speaker_id)
+                        self._call_engine_api(
+                            "set_voice",
+                            new_speaker_id,
+                            engine_id=self.VOICEVOX_ENGINE_ID,
+                        )
                         self.voicevox_speaker_id = new_speaker_id
                         voice_name = self.current_voice['name']
                         style_name = selected_style['name']
@@ -1280,8 +1342,11 @@ class App(AppBase):
                     new_speaker_id = selected_style['id']
 
                     if new_speaker_id != self.voicevox_speaker_id:
-                        self.context["tts"]["set_voicevox_speaker"](
-                            new_speaker_id)
+                        self._call_engine_api(
+                            "set_voice",
+                            new_speaker_id,
+                            engine_id=self.VOICEVOX_ENGINE_ID,
+                        )
                         self.voicevox_speaker_id = new_speaker_id
                         voice_name = self.current_voice['name']
                         style_name = selected_style['name']
