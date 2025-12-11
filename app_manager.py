@@ -24,11 +24,59 @@ class AppManager:
         self.active_app: Optional[str] = None  # Track the currently active non-overlay app
         self.overlay_apps: set = set()  # Track which apps are overlays
         self._stop_all = False
+        self.app_directory_map: Dict[str, str] = {}
+        self._refresh_app_directory_map()
+
+    def _refresh_app_directory_map(self) -> None:
+        """Create a name -> relative path lookup from the shared context."""
+        apps_context = self.context.get("apps", {}) if self.context else {}
+        mapping: Dict[str, str] = {}
+
+        by_name = apps_context.get("by_name")
+        if isinstance(by_name, dict):
+            items = [(name, data) for name, data in by_name.items()]
+        else:
+            items = []
+            for app in apps_context.get("all", []):
+                items.append((app.get("name"), app))
+
+        for name, data in items:
+            if not name or not isinstance(data, dict):
+                continue
+            relative_path = data.get("path") or name
+            mapping[name] = os.path.normpath(relative_path)
+
+        self.app_directory_map = mapping
+
+    def resolve_app_directory(self, app_name: str) -> Optional[str]:
+        """Resolve the absolute directory for an app, considering nested folders."""
+        if not app_name:
+            return None
+
+        relative_path = self.app_directory_map.get(app_name)
+        if relative_path is None:
+            self._refresh_app_directory_map()
+            relative_path = self.app_directory_map.get(app_name, app_name)
+
+        candidate = os.path.join(self.apps_dir, relative_path)
+        if os.path.isdir(candidate):
+            return candidate
+
+        fallback = os.path.join(self.apps_dir, app_name)
+        if os.path.isdir(fallback):
+            return fallback
+
+        print(f"[AppManager] Could not resolve path for app '{app_name}'")
+        return None
         
     def load_app_instance(self, app_name: str) -> Optional[AppBase]:
         """Load a single app instance from its main.py file."""
         try:
-            path = os.path.join(self.apps_dir, app_name, "main.py")
+            app_dir = self.resolve_app_directory(app_name)
+            if not app_dir:
+                return None
+
+            path = os.path.join(app_dir, "main.py")
             if not os.path.isfile(path):
                 print(f"[AppManager] App file not found: {path}")
                 return None
@@ -41,7 +89,7 @@ class AppManager:
                 print(f"[AppManager] No 'App' class found in {app_name}")
                 return None
 
-            self.context["app_path"] = os.path.join(self.apps_dir, app_name, "")
+            self.context["app_path"] = os.path.join(app_dir, "")
             app_instance = mod.App(self.context)
             if not isinstance(app_instance, AppBase):
                 print(f"[AppManager] App '{app_name}' does not inherit from AppBase")
@@ -413,7 +461,10 @@ class AppManager:
         """Get app's cursor preference from metadata, defaulting to False."""
         try:
             import json
-            metadata_path = os.path.join(self.apps_dir, app_name, "metadata.json")
+            app_dir = self.resolve_app_directory(app_name)
+            if not app_dir:
+                return False
+            metadata_path = os.path.join(app_dir, "metadata.json")
             if os.path.isfile(metadata_path):
                 with open(metadata_path, "r", encoding="utf-8") as f:
                     data = json.load(f)

@@ -6,6 +6,7 @@ VOICEVOX_PORT = 50021
 OPENJTALK_HTSVOICE_DIR = "/home/dietpi/open_jtalk/voice"
 CACHE_DIR = "/home/dietpi/piper_cache"
 CONFIG_DIR = "/home/dietpi/config"
+FILES_DIR = "/home/dietpi/files"
 APPS_DIR = "/home/dietpi/apps"
 OVERLAY_DIR = "/home/dietpi/overlays"
 ICON_DIR = "/home/dietpi/icons"

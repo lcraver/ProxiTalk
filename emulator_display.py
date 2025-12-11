@@ -46,7 +46,7 @@ class EmulatedDisplay:
         # Debug overlay for dirty-region instrumentation
         self._debug_regions: List[dict] = []
         self._debug_overlay_duration = 1 / 20 * 5  # Show overlay for 5 frames at 20 FPS
-        self._show_debug_overlay = False
+        self._show_debug_overlay = True
         self._icon_surface = None
 
         self._window_focused = True

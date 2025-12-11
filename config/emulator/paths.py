@@ -6,6 +6,7 @@ VOICEVOX_PORT = 50021
 OPENJTALK_HTSVOICE_DIR = "C:\\Users\\Pidge\\Documents\\ProxiTalk\\tts\\openjtalk"
 CACHE_DIR = "C:\\Users\\Pidge\\Documents\\ProxiTalk\\tts\\piper_cache"
 CONFIG_DIR = "C:\\Users\\Pidge\\Documents\\ProxiTalk\\config"
+FILES_DIR = "C:\\Users\\Pidge\\Documents\\ProxiTalk\\files"
 APPS_DIR = "C:\\Users\\Pidge\\Documents\\ProxiTalk\\apps"
 OVERLAY_DIR = "C:\\Users\\Pidge\\Documents\\ProxiTalk\\overlays"
 ICON_DIR = "C:\\Users\\Pidge\\Documents\\ProxiTalk\\assets\\icons"

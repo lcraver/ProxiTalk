@@ -11,6 +11,7 @@ import traceback
 import platform
 import io
 import wave
+from typing import List, Optional
 from PIL import Image, ImageDraw, ImageFont
 from emulator_display import create_display
 from audio_manager import (
@@ -33,6 +34,7 @@ from audio_manager import (
 )
 from tts_engines.base import EngineResources
 from tts_engine_manager import TTSEngineManager as ModularTTSEngineManager
+from keyboard_manager import KeyboardManager, KEY_DOWN, KEY_UP
 
 # --- Constants --- #
 
@@ -44,10 +46,10 @@ I2C_ADDRESS = 0x3C  # Common I2C address for SSD1306 displays
 
 if IS_WINDOWS:
     from config.emulator.paths import PIPER_BIN, MODEL_PATH, VOICEVOX_BIN, VOICEVOX_HOST, VOICEVOX_PORT, OPENJTALK_HTSVOICE_DIR, CACHE_DIR, CONFIG_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH
-    from config.emulator.paths import FONT_PATH, FONT_SMALL_PATH, OVERLAY_DIR
+    from config.emulator.paths import FONT_PATH, FONT_SMALL_PATH, OVERLAY_DIR, FILES_DIR
 else:
     from config.paths import PIPER_BIN, MODEL_PATH, VOICEVOX_BIN, VOICEVOX_HOST, VOICEVOX_PORT, OPENJTALK_HTSVOICE_DIR, CACHE_DIR, CONFIG_DIR, APPS_DIR, ICON_DIR, AUTOCOMPLETE_PATH
-    from config.paths import FONT_PATH, FONT_SMALL_PATH, OVERLAY_DIR
+    from config.paths import FONT_PATH, FONT_SMALL_PATH, OVERLAY_DIR, FILES_DIR
     
 # -- Emulator Setup --- #
 
@@ -59,14 +61,6 @@ def is_admin():
         return ctypes.windll.shell32.IsUserAnAdmin()
     except:
         return False
-
-if IS_WINDOWS:
-    # use the keyboard module or mock input
-    import keyboard
-else:
-    import evdev
-    from evdev import InputDevice, categorize, ecodes
-
 
 disp = create_display(IS_WINDOWS, 128, 64, ICON_DIR, I2C_PORT, I2C_ADDRESS)
 disp.contrast(255)
@@ -82,25 +76,60 @@ from interfaces import AppBase
 apps = []
 loaded_apps = {}
 
+APP_DIRECTORY_SKIP = {"__pycache__"}
+app_path_lookup = {}
+
+def resolve_app_relative_path(identifier: str) -> str:
+    """Map an app identifier to its relative filesystem path inside APPS_DIR."""
+    if not identifier:
+        return ""
+    normalized = os.path.normpath(identifier)
+    return app_path_lookup.get(identifier, normalized)
+
+def discover_app_directories(base_dir: str, relative_path: Optional[str] = None) -> List[str]:
+    """Recursively discover all app directories containing a main.py file."""
+    discovered: List[str] = []
+    try:
+        with os.scandir(base_dir) as entries:
+            for entry in entries:
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+
+                name = entry.name
+                if name.startswith('.') or name in APP_DIRECTORY_SKIP:
+                    continue
+
+                next_relative = os.path.join(relative_path, name) if relative_path else name
+                next_relative = os.path.normpath(next_relative)
+                main_path = os.path.join(entry.path, "main.py")
+
+                if os.path.isfile(main_path):
+                    discovered.append(next_relative)
+                else:
+                    discovered.extend(discover_app_directories(entry.path, next_relative))
+    except FileNotFoundError:
+        print(f"[Loader] Apps directory not found: {base_dir}")
+    return discovered
+
 def load_apps():
     apps = []
-    for folder in os.listdir(APPS_DIR):
-        main_path = os.path.join(APPS_DIR, folder, "main.py")
-        if os.path.isfile(main_path):
-            apps.append({
-                "name": folder,
-                "metadata": load_metadata(folder),
-                "icon_normal": load_icon(folder),
-                "icon_selected": load_icon(folder, "selected"),
-                "path": main_path,
-            })
+    for relative_path in sorted(discover_app_directories(APPS_DIR)):
+        folder = os.path.basename(relative_path)
+        apps.append({
+            "name": folder,
+            "path": relative_path,
+            "metadata": load_metadata(relative_path),
+            "icon_normal": load_icon(relative_path),
+            "icon_selected": load_icon(relative_path, "selected"),
+        })
     return apps
 
-def load_icon(app_name, state=None):
+def load_icon(app_identifier, state=None):
+    relative_path = resolve_app_relative_path(app_identifier)
     if state:
-        icon_path = os.path.join(APPS_DIR, app_name, f"icon_{state}.png")
+        icon_path = os.path.join(APPS_DIR, relative_path, f"icon_{state}.png")
     else:
-        icon_path = os.path.join(APPS_DIR, app_name, "icon.png")
+        icon_path = os.path.join(APPS_DIR, relative_path, "icon.png")
         
     if os.path.isfile(icon_path):
         return Image.open(icon_path).convert("1")
@@ -123,13 +152,21 @@ def load_metadata(app_name):
 
 def load_app_instance(app_name, context):
     try:
-        path = os.path.join(APPS_DIR, app_name, "main.py")
+        relative_path = resolve_app_relative_path(app_name)
+        app_dir = os.path.join(APPS_DIR, relative_path)
+        path = os.path.join(app_dir, "main.py")
+        if not os.path.isfile(path):
+            print(f"[Error] App file not found for '{app_name}' (looked in {path})")
+            return None
         spec = importlib.util.spec_from_file_location(f"{app_name}.main", path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
 
         if not hasattr(mod, "App"):
             raise AttributeError("No 'App' class found")
+
+        if context is not None:
+            context["app_path"] = os.path.join(app_dir, "")
 
         app_instance = mod.App(context)
         if not isinstance(app_instance, AppBase):
@@ -145,6 +182,19 @@ def load_app_instance(app_name, context):
     return None
 
 apps = load_apps()
+apps_by_name = {}
+app_path_lookup = {}
+
+for app in apps:
+    slug = app.get("name")
+    if not slug:
+        continue
+    relative_path = app.get("path") or slug
+    if slug in apps_by_name:
+        existing_path = apps_by_name[slug].get("path")
+        print(f"[Loader] Duplicate app name detected: {slug} ({existing_path} vs {relative_path})")
+    apps_by_name[slug] = app
+    app_path_lookup[slug] = os.path.normpath(relative_path)
 
 # --- Icons --- #
 
@@ -173,10 +223,11 @@ def load_icon(app_name, state=None):
     if cache_key in _icon_cache:
         return _icon_cache[cache_key]
         
+    relative_path = resolve_app_relative_path(app_name)
     if state:
-        icon_path = os.path.join(APPS_DIR, app_name, f"icon_{state}.png")
+        icon_path = os.path.join(APPS_DIR, relative_path, f"icon_{state}.png")
     else:
-        icon_path = os.path.join(APPS_DIR, app_name, "icon.png")
+        icon_path = os.path.join(APPS_DIR, relative_path, "icon.png")
         
     if os.path.isfile(icon_path):
         img = Image.open(icon_path).convert("1")
@@ -803,6 +854,14 @@ from config.wordmap import word_map
 from config.user_preferences import initialize_preferences
 user_preferences = initialize_preferences(CONFIG_DIR)
 
+# Ensure launcher defaults to the Proxi app on fresh startup
+if user_preferences:
+    try:
+        if user_preferences.get_last_launched_app() != "proxi":
+            user_preferences.set_last_launched_app("proxi")
+    except Exception as exc:
+        print(f"[Main] Failed to set default launcher app: {exc}")
+
 # Initialize TTS Engine Manager
 engine_resources = EngineResources(
     is_windows=IS_WINDOWS,
@@ -943,98 +1002,20 @@ def run_tts(text, background=False, skip_cache=False):
 
 from config.keymap import shift_key_map
 
-def find_keyboard():
-    devices = [InputDevice(path) for path in evdev.list_devices()]
-    print(f"Devices found: {[device.name for device in devices]}", flush=True)
-    for device in devices:
-        print(f"Checking device: {device.name} at {device.path}", flush=True)
-        if 'mouse' in device.name.lower() or 'touchpad' in device.name.lower():
-            print("Skipping mouse/touchpad device", flush=True)
-            continue
-        if 'keyboard' in device.name.lower():
-            display_queue.put(("set_screen", "Connecting", f"Found Keyboard: {device.name}"))
-            print(f"Keyboard found: {device.name} at {device.path}", flush=True)
-            return device
-    print("No keyboard found in devices", flush=True)
-    return None
-
-
 if IS_WINDOWS:
-    import keyboard
     from config.emulator.win_keycodes import WIN_TO_LINUX_KEYCODE
-
-    class ecodes:
-        EV_KEY = 1
-
-    EV_KEY = ecodes.EV_KEY
-    KEY_DOWN = 1
-    KEY_UP = 0
-
-    class EvdevLikeEvent:
-        def __init__(self, kb_event):
-            self.type = EV_KEY
-            self.code = kb_event.scan_code
-            self.value = KEY_DOWN if kb_event.event_type == "down" else KEY_UP
-            self.name = kb_event.name
-
-    class KeyEvent:
-        # Similar to evdev.KeyEvent
-        def __init__(self, event):
-            self.event = event
-            self.scancode = event.code
-            self.keystate = event.value  # 1=down, 0=up
-
-        @property
-        def keycode(self):
-            # Map the Windows keyboard event name to Linux KEY_* string
-            keyname = self.event.name.lower()
-            return WIN_TO_LINUX_KEYCODE.get(keyname, self.event.name.upper())
-        
-        def __repr__(self):
-            return f"<KeyEvent keycode={self.keycode} keystate={self.keystate}>"
-
-    def categorize(event):
-        # Only handle EV_KEY events for now
-        if event.type == EV_KEY:
-            return KeyEvent(event)
-        return event
-
-    class WindowsInputDevice:
-        def __init__(self, display_instance):
-            self.display = display_instance
-            
-        def read_loop(self):
-            while True:
-                kb_event = keyboard.read_event()
-                if kb_event.event_type in ("down", "up"):
-                    # Only yield events if the emulator window is focused
-                    if self.display and self.display.is_window_focused():
-                        yield EvdevLikeEvent(kb_event)
-                    # Small delay to prevent busy waiting when not focused
-                    elif not self.display.is_window_focused():
-                        import time
-                        time.sleep(0.01)
-
-    def wait_for_keyboard():
-        return WindowsInputDevice(disp)
 else:
-    import evdev
-    def wait_for_keyboard(max_retries=24, retry_delay=2.5):
-        tries = 0
-        display_queue.put(("set_screen", "Connecting", "Looking for keyboard..."))
-        display_queue.put(("draw_icon", searching_icon, 0, height - 8))
+    WIN_TO_LINUX_KEYCODE = None
 
-        while tries < max_retries or max_retries == -1:
-            dev = find_keyboard()
-            if dev:
-                display_queue.put(("clear_icon",))
-                print(f"Keyboard found: {dev.name} at {dev.path}", flush=True)
-                return dev
 
-            tries += 1
-            time.sleep(retry_delay)
-
-        return None
+def apply_shift_mapping(keycode, keys_pressed, shift_left, shift_right):
+    """Return mapped keycode when a shift modifier is active."""
+    if shift_left in keys_pressed or shift_right in keys_pressed:
+        mapped = shift_key_map.get(keycode)
+        if mapped:
+            print("Key pressed + shift:", keycode)
+            return mapped
+    return keycode
 
 # Utility function for getting text dimensions using modern getbbox method
 def get_text_size(text, _font):
@@ -1075,7 +1056,7 @@ def get_text_baseline_offset(font):
     if font == fontSmall:
         return 1
     elif font == fontLarge:
-        return 5
+        return 3
     elif font == font:
         return 0
     else:
@@ -1202,6 +1183,7 @@ def main():
         },
         "apps": {
             "all": apps,
+            "by_name": apps_by_name,
             "load": load_app_instance,
             "loaded_apps": loaded_apps,
         },
@@ -1244,6 +1226,7 @@ def main():
         "CONFIG_DIR": CONFIG_DIR,
         "APPS_DIR": APPS_DIR,
         "OVERLAY_DIR": OVERLAY_DIR,
+        "FILES_DIR": FILES_DIR,
         "AUTOCOMPLETE_PATH": AUTOCOMPLETE_PATH,
     }
     
@@ -1300,61 +1283,93 @@ def main():
     else:
         print(f"[Main] No startup audio found")
 
+    def show_connecting():
+        display_queue.put(("set_screen", "Connecting", "Looking for keyboard..."))
+        display_queue.put(("draw_icon", searching_icon, 0, height - 8))
+
+    def show_ready():
+        display_queue.put(("clear_icon",))
+        display_queue.put(("set_screen", "Ready", "Waiting for input..."))
+
+    def show_disconnected():
+        display_queue.put(("set_screen", "Disconnected", "Keyboard lost. Reconnecting..."))
+        display_queue.put(("draw_icon", searching_icon, 0, height - 8))
+
+    win_key_map = WIN_TO_LINUX_KEYCODE if IS_WINDOWS else None
+    focus_check = getattr(disp, "is_window_focused", None)
+    last_focus_state = True
+    keyboard_manager = KeyboardManager(
+        is_windows=IS_WINDOWS,
+        display=disp,
+        win_keycode_map=win_key_map,
+        queue_size=512,
+        on_connect=show_ready,
+        on_disconnect=show_disconnected,
+    )
+
     try:
+        show_connecting()
+        keyboard_manager.start()
+        keyboard_manager.wait_until_ready(timeout=5.0)
+
+        poll_interval = 1.0 / 60.0
         while True:
-            dev = wait_for_keyboard()
-            if not dev:
-                display_queue.put(("set_screen", "Error", "No Keyboard Found"))
-                time.sleep(5)
+            events = []
+            first_event = keyboard_manager.get_event(timeout=poll_interval)
+            if first_event is not None:
+                events.append(first_event)
+                while True:
+                    next_event = keyboard_manager.get_event(timeout=0)
+                    if next_event is None:
+                        break
+                    events.append(next_event)
+
+            if not events:
                 continue
 
-            display_queue.put(("set_screen", "Ready", "Waiting for input..."))
-            
-            try:
-                for event in dev.read_loop():
-                    if event.type == ecodes.EV_KEY:
-                        
-                        key_event = categorize(event)
-                        keycode = key_event.keycode
+            for event in events:
+                if event.kind == "status":
+                    if event.data == "connecting":
+                        show_connecting()
+                    elif event.data == "disconnected":
+                        print("Keyboard disconnected. Reconnecting...", flush=True)
+                        keys_pressed.clear()
+                    elif event.data == "connected":
+                        keys_pressed.clear()
+                    continue
 
-                        if isinstance(keycode, list):
-                            keycode = keycode[-1]
+                keycode = event.keycode
+                keystate = event.keystate
 
-                        if key_event.keystate == 1: # Key down
-                            if keycode in keys_pressed:
-                                continue
-                            
-                            keys_pressed.add(keycode)
-                            
-                            if shift_key_left in keys_pressed or shift_key_right in keys_pressed:
-                                print("Key pressed + shift:", keycode)
-                                tmp = shift_key_map.get(keycode, None)
-                                if tmp is not None:
-                                    keycode = tmp
-                            app_manager.distribute_event("onkeydown", keycode)
-                            
-                        elif key_event.keystate == 0: # Key up
-                            if keycode in keys_pressed:
-                                keys_pressed.remove(keycode)
+                if not keycode or keystate is None:
+                    continue
 
-                                if shift_key_left in keys_pressed or shift_key_right in keys_pressed:
-                                    print("Key pressed + shift:", keycode)
-                                    tmp = shift_key_map.get(keycode, None)
-                                    if tmp is not None:
-                                        keycode = tmp
-                                app_manager.distribute_event("onkeyup", keycode)
-                            
-            except OSError as e:
-                if e.errno == 19:  # No such device (disconnected)
-                    print("Keyboard disconnected (Errno 19). Reconnecting...", flush=True)
-                    display_queue.put(("set_screen", "Disconnected", "Keyboard lost. Reconnecting..."))
-                    display_queue.put(("draw_icon", searching_icon, 0, height - 8))
-                    time.sleep(1)
-                else:
-                    raise  # Only ignore known disconnection errors
+                focused = focus_check() if focus_check else True
+                if not focused:
+                    if last_focus_state:
+                        keys_pressed.clear()
+                    last_focus_state = False
+                    continue
+                if not last_focus_state:
+                    keys_pressed.clear()
+                last_focus_state = True
+
+                if keystate == KEY_DOWN:
+                    if keycode in keys_pressed:
+                        continue
+                    keys_pressed.add(keycode)
+                    mapped_code = apply_shift_mapping(keycode, keys_pressed, shift_key_left, shift_key_right)
+                    app_manager.distribute_event("onkeydown", mapped_code)
+                elif keystate == KEY_UP:
+                    if keycode in keys_pressed:
+                        keys_pressed.remove(keycode)
+                    mapped_code = apply_shift_mapping(keycode, keys_pressed, shift_key_left, shift_key_right)
+                    app_manager.distribute_event("onkeyup", mapped_code)
     except KeyboardInterrupt:
         print("Exiting on KeyboardInterrupt...")
     finally:
+        if 'keyboard_manager' in locals():
+            keyboard_manager.stop()
         # Stop all apps gracefully
         if 'app_manager' in locals():
             app_manager.stop_all_apps()

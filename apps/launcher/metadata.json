@@ -1,5 +1,7 @@
 {
   "name": "Launcher",
   "version": "1.0",
-  "cursor_enabled": false
+  "cursor_enabled": false,
+  "description": "This is the basic launcher app that ships with the OS. It provides a simple interface to launch other applications installed on the system.",
+  "author": "Pidge"
 }
