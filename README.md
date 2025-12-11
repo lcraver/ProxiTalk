@@ -61,7 +61,7 @@ Drop-block puzzle classic adapted to the 1-bit panel.
 
 # Overlays Included
 
-## Life Countdown
+## Life Countdown (Mori)
 A life countdown overlay that displays approximate seconds remaining for you to live. Can be turned off in app settings if you want less existential dread.
 
 ## Settings
@@ -85,6 +85,13 @@ python proxitalk.py
 ```
 
 On Windows, this will start the emulated display. On Linux, it will run on actual hardware.
+
+### Startup Audio / Animation
+Two optional assets live in the repo root:
+- `startup.wav` – plays once through the speaker stack or emulator when the OS boots.
+- `startup.gif` – 128×64 (or smaller) monochrome animation that displays while the audio runs.
+
+If you delete either file, that portion of the startup sequence is skipped (no errors are raised). Provide your own versions by dropping replacements with the same filenames next to `proxitalk.py`. Animated GIF frames are automatically centered and dithered, so you can work in grayscale and let the runtime handle the 1‑bit conversion.
 
 ## Creating Custom Apps
 

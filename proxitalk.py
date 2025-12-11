@@ -35,6 +35,7 @@ from audio_manager import (
 from tts_engines.base import EngineResources
 from tts_engine_manager import TTSEngineManager as ModularTTSEngineManager
 from keyboard_manager import KeyboardManager, KEY_DOWN, KEY_UP
+from utils.image_utils import AppImageUtils
 
 # --- Constants --- #
 
@@ -844,6 +845,90 @@ def display_thread_func():
     except Exception as e:
         print(f"[Display Thread] Crashed with exception: {e}", flush=True)
 
+def play_startup_sequence():
+    """Play startup.wav alongside startup.gif before the launcher appears."""
+    startup_dir = os.path.dirname(__file__)
+    audio_path = os.path.join(startup_dir, "startup.wav")
+    gif_path = os.path.join(startup_dir, "startup.gif")
+
+    audio_duration = 0.0
+    audio_started = False
+
+    if os.path.exists(audio_path):
+        try:
+            with wave.open(audio_path, "rb") as wav_file:
+                frames = wav_file.getnframes()
+                framerate = wav_file.getframerate() or 1
+                audio_duration = frames / float(framerate or 1)
+            print("[Main] Playing startup sfx: プロキトク...")
+            play_sfx(audio_path)
+            audio_started = True
+        except Exception as exc:
+            print(f"[Main] Failed to play startup sfx: {exc}")
+    else:
+        print("[Main] No startup audio found")
+
+    gif_frames: List[Image.Image] = []
+    gif_durations: List[float] = []
+    if os.path.exists(gif_path):
+        try:
+            with Image.open(gif_path) as gif_image:
+                animation = AppImageUtils.prepare_animation_frames(
+                    gif_image,
+                    max_width=width,
+                    max_height=height,
+                    allow_upscale=True,
+                )
+            gif_frames = animation.get("frames", [])
+            gif_durations = [max(0.05, duration / 1000.0) for duration in animation.get("durations", [])]
+            if gif_frames:
+                print(f"[Main] Loaded startup animation ({len(gif_frames)} frames)")
+        except Exception as exc:
+            print(f"[Main] Failed to load startup animation: {exc}")
+    else:
+        print("[Main] No startup animation found")
+
+    if not gif_frames:
+        if audio_started and audio_duration > 0:
+            time.sleep(audio_duration)
+        return
+
+    animation_cycle = sum(gif_durations) if gif_durations else 0.0
+    if animation_cycle <= 0:
+        animation_cycle = len(gif_frames) * 0.08
+
+    if audio_duration > 0:
+        sequence_duration = max(audio_duration, animation_cycle)
+    else:
+        sequence_duration = animation_cycle
+
+    display_queue.put(("clear_overlay_area", 0, 0, width, height))
+    display_queue.put(("clear_base_area", 0, 0, width, height))
+
+    start_time = time.monotonic()
+    frame_index = 0
+    total_frames = len(gif_frames)
+
+    while True:
+        frame = gif_frames[frame_index]
+        pos_x = max(0, (width - frame.width) // 2)
+        pos_y = max(0, (height - frame.height) // 2)
+        display_queue.put(("clear_base_area", 0, 0, width, height))
+        display_queue.put(("draw_base_image", frame, pos_x, pos_y))
+
+        sleep_time = gif_durations[frame_index] if gif_durations else 0.08
+        time.sleep(sleep_time)
+
+        elapsed = time.monotonic() - start_time
+        if sequence_duration > 0 and elapsed >= sequence_duration:
+            break
+
+        frame_index = (frame_index + 1) % total_frames
+        if audio_duration <= 0 and frame_index == 0:
+            break
+
+    display_queue.put(("clear_base_area", 0, 0, width, height))
+
 # --- TTS + Cache --- #
 
 os.makedirs(CACHE_DIR, exist_ok=True)
@@ -1244,6 +1329,12 @@ def main():
     from app_manager import AppManager
     app_manager = AppManager(APPS_DIR, OVERLAY_DIR, context)
 
+    # Update context to include app_manager for other apps to use
+    context["app_manager"] = app_manager
+
+    # Play startup audio/animation before any apps render
+    play_startup_sequence()
+
     # Load all overlays
     overlay_count = app_manager.load_overlays(apps)
     print(f"[Main] Loaded {overlay_count} overlay apps")
@@ -1266,22 +1357,6 @@ def main():
         print("[Main] launcher app started")
     else:
         print("[Main] Failed to load launcher app")
-
-    # Update context to include app_manager for other apps to use
-    context["app_manager"] = app_manager
-
-    # Play startup voice saying "プロキトク"
-    startup_voice_path = os.path.join(os.path.dirname(__file__), "startup.wav")
-    
-    # Prefer the Japanese voice, fallback to melody
-    if os.path.exists(startup_voice_path):
-        print("[Main] Playing startup sfx: プロキトク...")
-        try:
-            play_sfx(startup_voice_path)
-        except Exception as e:
-            print(f"[Main] Failed to play startup sfx: {e}")
-    else:
-        print(f"[Main] No startup audio found")
 
     def show_connecting():
         display_queue.put(("set_screen", "Connecting", "Looking for keyboard..."))
