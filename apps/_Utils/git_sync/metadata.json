@@ -1,0 +1,6 @@
+{
+  "name": "Git Sync",
+  "version": "1.0",
+  "description": "Checks the ProxiTalk GitHub repository for updates and syncs apps/overlays onto this device.",
+  "author": "Pidge"
+}

@@ -5,32 +5,59 @@ ProxiTalk is a custom operating system designed for the ProxiTalk "platform", wh
 
 # Apps Included
 
-## ![Launcher Icon](apps/app_settings/icon.png) Launcher
-Used to launch apps and can be customized to the user's liking.
+## System & Communication
 
-## ![App Settings Icon](apps/app_settings/icon.png) App Settings
-Manage app visibility settings and customize which apps appear in the launcher.
+### ![Launcher Icon](apps/launcher/icon.png) Launcher
+Browse, favorite, and launch every installed experience on the device.
 
-## ![Calendar Icon](apps/calendar/icon.png) Calendar [WIP]
-Monthly calendar view for tracking dates and events.
+### ![Proxi Icon](apps/proxi/icon.png) Proxi
+Flagship TTS communicator for typing and speaking phrases fast.
 
-## ![Clock Icon](apps/clock/icon.png) Clock
-A clock app for ProxiTalk with timer functionality.
+### ![App Settings Icon](apps/_Settings/app_settings/icon.png) App Settings
+Toggle app visibility and tweak how entries appear in the launcher.
 
-## ![Code Editor Icon](apps/code_editor/icon.png) Code Editor
-Text editor for writing and editing files on device.
+### ![TTS Settings Icon](apps/_Settings/tts_settings/icon.png) TTS Settings
+Pick which engines are active, adjust voices, and tune speech defaults.
 
-## ![Discourse Chat Icon](apps/discourse_chat/icon.png) Discourse Chat
-Chat application for communicating through Discourse forums.
+### ![App Reboot Icon](apps/_Settings/reboot/icon.png) App Reboot
+Soft-restart the runtime when you need a quick clean slate.
 
-## ![Hebi Icon](apps/hebi/icon.png) Hebi
-The classic arcade game now on ProxiTalk~
+### ![Discourse Chat Icon](apps/_Internet/discourse_chat/icon.png) Discourse Chat
+Chat with The Garden forums directly from your ProxiTalk handheld.
 
-## ![ProxiTalk Icon](apps/proxi/icon.png) ProxiTalk
-The main app for ProxiTalk, used for realtime TTS.
+### ![Browser Icon](apps/_Internet/pt_browser/icon.png) ProxiTalk Browser
+Minimalist browser tailored to the 128x64 screen for quick lookups.
 
-## ![Tetra Icon](apps/tetra/icon.png) Tetra
-The classic puzzle game now on ProxiTalk~
+## Utilities & Creative Tools
+
+### ![Calendar Icon](apps/_Utils/calendar/icon.png) Calendar [WIP]
+Proof-of-concept monthly calendar for jotting down upcoming events.
+
+### ![Clock Icon](apps/_Utils/clock/icon.png) Clock
+Displays current time/date and offers simple timer capability.
+
+### ![Code Editor Icon](apps/_Utils/code_editor/icon.png) Code Editor
+Lightweight editor with syntax highlighting and basic file tools.
+
+### ![Gallery Icon](apps/_Utils/gallery/icon.png) Gallery
+Browse monochrome previews of locally stored images.
+
+### ![Git Sync Icon](apps/_Utils/git_sync/icon.png) Git Sync
+Check the public repo for updates and sync apps/overlays in place.
+
+### ![Video Player Icon](apps/_Utils/video_player/icon.png) Video Player
+Drop in an MP4 and play it back on the ProxiTalk display.
+
+## Games
+
+### ![Doom Clone Icon](apps/_Games/doom_clone/icon.png) Doom Clone
+Retro raycasting FPS demo lovingly inspired by DOOM.
+
+### ![Hebi Icon](apps/_Games/hebi/icon.png) Hebi
+Classic snake gameplay built for the ProxiTalk controls.
+
+### ![Tetra Icon](apps/_Games/tetra/icon.png) Tetra
+Drop-block puzzle classic adapted to the 1-bit panel.
 
 # Overlays Included
 
