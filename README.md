@@ -7,7 +7,7 @@ ProxiTalk is a custom operating system designed for the ProxiTalk "platform", wh
 
 ## System & Communication
 
-### ![Launcher Icon](apps/launcher/icon.png) Launcher
+### Launcher
 Browse, favorite, and launch every installed experience on the device.
 
 ### ![Proxi Icon](apps/proxi/icon.png) Proxi
@@ -61,10 +61,10 @@ Drop-block puzzle classic adapted to the 1-bit panel.
 
 # Overlays Included
 
-## ![Life Countdown Icon](apps/app_settings/icon.png) Life Countdown
+## Life Countdown
 A life countdown overlay that displays approximate seconds remaining for you to live. Can be turned off in app settings if you want less existential dread.
 
-## ![Settings Overlay Icon](apps/app_settings/icon.png) Settings
+## Settings
 Configure screen brightness, volume, and more without leaving the app you're in.
 
 ---
