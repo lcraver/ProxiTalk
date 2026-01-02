@@ -111,7 +111,7 @@ class AppImageUtils:
         max_height: int,
         allow_upscale: bool = False,
         dither: Image.Dither = Image.Dither.FLOYDSTEINBERG,
-        min_frame_duration_ms: int = 50,
+        min_frame_duration_ms: int = 100,
     ) -> Dict[str, List]:
         """Convert an animated image into display-ready frames and durations."""
         target_width, target_height = cls._target_size(gif_image.size, max_width, max_height, allow_upscale)

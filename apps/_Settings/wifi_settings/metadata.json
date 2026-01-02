@@ -1,0 +1,7 @@
+{
+  "name": "WiFi Settings",
+  "version": "1.0",
+  "description": "Scan and connect to WiFi networks on ProxiTalk.",
+  "author": "Pidge",
+  "type": "app"
+}
