@@ -38,6 +38,7 @@ class UserPreferences:
             "piper_model": None,  # Default Piper model path
             "pyopenjtalk_voice": None,  # Default PyOpenJTalk+ voice filename
             "keyboard_device_path": None,  # Optional override for /dev/input/eventX
+            "auto_sleep_minutes": 5,  # Minutes of inactivity before sleep (0 disables)
         }
     
     def _save_preferences(self) -> bool:
@@ -227,6 +228,16 @@ class UserPreferences:
     def set_keyboard_device_path(self, device_path: Optional[str]) -> bool:
         """Set preferred keyboard device path (None clears override)"""
         self._preferences["keyboard_device_path"] = device_path
+        return self._save_preferences()
+
+    def get_auto_sleep_minutes(self, default: float = 5.0) -> float:
+        """Return configured auto-sleep timeout in minutes (0 disables)."""
+        return float(self._preferences.get("auto_sleep_minutes", default))
+
+    def set_auto_sleep_minutes(self, minutes: float) -> bool:
+        """Set inactivity timeout in minutes (values <=0 disable auto-sleep)."""
+        safe_minutes = max(0.0, float(minutes))
+        self._preferences["auto_sleep_minutes"] = safe_minutes
         return self._save_preferences()
 
 # Global instance - will be initialized by main app

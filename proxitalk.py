@@ -36,10 +36,12 @@ from tts_engines.base import EngineResources
 from tts_engine_manager import TTSEngineManager as ModularTTSEngineManager
 from keyboard_manager import KeyboardManager, KEY_DOWN, KEY_UP
 from utils.image_utils import AppImageUtils
+from sleep_manager import SleepController
 
 # --- Constants --- #
 
 IS_WINDOWS = platform.system() == "Windows"
+DEFAULT_AUTO_SLEEP_MINUTES = 5.0
 
 # I2C settings for luma.oled (Linux only)
 I2C_PORT = 1        # I2C port (usually 1 on Raspberry Pi)
@@ -947,6 +949,9 @@ if user_preferences:
     except Exception as exc:
         print(f"[Main] Failed to set default launcher app: {exc}")
 
+auto_sleep_minutes = user_preferences.get_auto_sleep_minutes(DEFAULT_AUTO_SLEEP_MINUTES) if user_preferences else 0.0
+auto_sleep_seconds = max(0.0, float(auto_sleep_minutes)) * 60.0
+
 # Initialize TTS Engine Manager
 engine_resources = EngineResources(
     is_windows=IS_WINDOWS,
@@ -1221,6 +1226,7 @@ def main():
 
     shift_key_left = 'KEY_LEFTSHIFT'
     shift_key_right = 'KEY_RIGHTSHIFT'
+    wake_keycode = 'KEY_SPACE'
     keys_pressed = set()
     
     context = {
@@ -1332,6 +1338,22 @@ def main():
     # Update context to include app_manager for other apps to use
     context["app_manager"] = app_manager
 
+    sleep_controller = SleepController(
+        display=disp,
+        display_queue=display_queue,
+        app_manager=app_manager,
+        user_preferences=user_preferences,
+        screen_size=(width, height),
+        stop_music_cb=stop_music,
+        stop_stream_cb=stop_audio_stream,
+    )
+    sleep_controller.set_idle_timeout(auto_sleep_seconds)
+    context["sleep"] = {
+        "controller": sleep_controller,
+        "is_sleeping": lambda: sleep_controller.sleeping,
+        "wake": sleep_controller.exit_sleep,
+    }
+
     # Play startup audio/animation before any apps render
     play_startup_sequence()
 
@@ -1392,6 +1414,7 @@ def main():
         show_connecting()
         keyboard_manager.start()
         keyboard_manager.wait_until_ready(timeout=5.0)
+        last_input_time = time.monotonic()
 
         poll_interval = 1.0 / 60.0
         while True:
@@ -1406,6 +1429,11 @@ def main():
                     events.append(next_event)
 
             if not events:
+                current_time = time.monotonic()
+                if sleep_controller.should_sleep(last_input_time, current_time):
+                    if sleep_controller.enter_sleep():
+                        keys_pressed.clear()
+                        last_input_time = current_time
                 continue
 
             for event in events:
@@ -1435,17 +1463,34 @@ def main():
                     keys_pressed.clear()
                 last_focus_state = True
 
+                if sleep_controller.sleeping:
+                    if keystate == KEY_DOWN and keycode == wake_keycode:
+                        if sleep_controller.exit_sleep():
+                            keys_pressed.clear()
+                            last_input_time = time.monotonic()
+                    elif keystate == KEY_UP and keycode == wake_keycode:
+                        keys_pressed.discard(keycode)
+                    continue
+
                 if keystate == KEY_DOWN:
                     if keycode in keys_pressed:
                         continue
                     keys_pressed.add(keycode)
                     mapped_code = apply_shift_mapping(keycode, keys_pressed, shift_key_left, shift_key_right)
+                    last_input_time = time.monotonic()
                     app_manager.distribute_event("onkeydown", mapped_code)
                 elif keystate == KEY_UP:
                     if keycode in keys_pressed:
                         keys_pressed.remove(keycode)
                     mapped_code = apply_shift_mapping(keycode, keys_pressed, shift_key_left, shift_key_right)
+                    last_input_time = time.monotonic()
                     app_manager.distribute_event("onkeyup", mapped_code)
+
+            current_time = time.monotonic()
+            if sleep_controller.should_sleep(last_input_time, current_time):
+                if sleep_controller.enter_sleep():
+                    keys_pressed.clear()
+                    last_input_time = current_time
     except KeyboardInterrupt:
         print("Exiting on KeyboardInterrupt...")
     finally:
