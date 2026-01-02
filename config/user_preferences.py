@@ -37,6 +37,7 @@ class UserPreferences:
             "voicevox_speaker_id": 2,  # Default VoiceVox speaker ID
             "piper_model": None,  # Default Piper model path
             "pyopenjtalk_voice": None,  # Default PyOpenJTalk+ voice filename
+            "keyboard_device_path": None,  # Optional override for /dev/input/eventX
         }
     
     def _save_preferences(self) -> bool:
@@ -217,6 +218,15 @@ class UserPreferences:
     def set_pyopenjtalk_voice(self, voice_filename: str) -> bool:
         """Set the PyOpenJTalk+ voice filename"""
         self._preferences["pyopenjtalk_voice"] = voice_filename
+        return self._save_preferences()
+
+    def get_keyboard_device_path(self) -> Optional[str]:
+        """Return preferred keyboard device path if set"""
+        return self._preferences.get("keyboard_device_path")
+
+    def set_keyboard_device_path(self, device_path: Optional[str]) -> bool:
+        """Set preferred keyboard device path (None clears override)"""
+        self._preferences["keyboard_device_path"] = device_path
         return self._save_preferences()
 
 # Global instance - will be initialized by main app

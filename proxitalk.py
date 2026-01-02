@@ -1373,6 +1373,11 @@ def main():
     win_key_map = WIN_TO_LINUX_KEYCODE if IS_WINDOWS else None
     focus_check = getattr(disp, "is_window_focused", None)
     last_focus_state = True
+    if user_preferences and hasattr(user_preferences, "get_keyboard_device_path"):
+        preferred_keyboard_device = user_preferences.get_keyboard_device_path()
+    else:
+        preferred_keyboard_device = None
+
     keyboard_manager = KeyboardManager(
         is_windows=IS_WINDOWS,
         display=disp,
@@ -1380,6 +1385,7 @@ def main():
         queue_size=512,
         on_connect=show_ready,
         on_disconnect=show_disconnected,
+        preferred_device=preferred_keyboard_device,
     )
 
     try:

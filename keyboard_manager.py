@@ -30,12 +30,14 @@ class KeyboardManager:
         queue_size: int = 256,
         on_connect: Optional[Callable[[], None]] = None,
         on_disconnect: Optional[Callable[[], None]] = None,
+        preferred_device: Optional[str] = None,
     ) -> None:
         self.is_windows = is_windows
         self.display = display
         self.win_keycode_map = win_keycode_map or {}
         self.on_connect = on_connect
         self.on_disconnect = on_disconnect
+        self._preferred_device = preferred_device
         self.event_queue: "queue.Queue[KeyboardEvent]" = queue.Queue(maxsize=queue_size)
         self._running = threading.Event()
         self._ready_event = threading.Event()
@@ -95,6 +97,14 @@ class KeyboardManager:
             pass
         self._linux_device = None
 
+    def _open_linux_device(self, path, input_device_cls, evdev_module):
+        try:
+            device = input_device_cls(path)
+        except Exception as exc:
+            print(f"[KeyboardManager] Failed to open {path}: {exc}", flush=True)
+            return None
+        return device
+
     def _update_status(self, status: str) -> None:
         if status == self._last_status:
             return
@@ -132,7 +142,16 @@ class KeyboardManager:
         while self._running.is_set():
             if self._linux_device is None:
                 self._update_status("connecting")
-                device = self._find_keyboard(evdev, InputDevice)
+                device = None
+                if self._preferred_device:
+                    device = self._open_linux_device(self._preferred_device, InputDevice, evdev)
+                    if device is None:
+                        print(
+                            f"[KeyboardManager] Preferred device '{self._preferred_device}' unavailable, falling back to auto-detect",
+                            flush=True,
+                        )
+                if device is None:
+                    device = self._find_keyboard(evdev, InputDevice)
                 if not device:
                     time.sleep(reconnect_delay)
                     continue
@@ -156,6 +175,24 @@ class KeyboardManager:
                 if not events:
                     time.sleep(idle_sleep)
                     continue
+
+                for event in events:
+                    if not self._running.is_set():
+                        break
+                    if event.type != ecodes.EV_KEY:
+                        continue
+                    key_event = categorize(event)
+                    keycode = key_event.keycode
+                    if isinstance(keycode, list):
+                        keycode = keycode[-1]
+                    self._queue_event(
+                        KeyboardEvent(
+                            kind="key",
+                            keycode=keycode,
+                            keystate=key_event.keystate,
+                            timestamp=time.time(),
+                        )
+                    )
             except BlockingIOError:
                 time.sleep(idle_sleep)
                 continue
@@ -168,34 +205,42 @@ class KeyboardManager:
                 self._release_linux_device()
                 raise
 
-            for event in events:
-                if not self._running.is_set():
-                    break
-                if event.type != ecodes.EV_KEY:
-                    continue
-                key_event = categorize(event)
-                keycode = key_event.keycode
-                if isinstance(keycode, list):
-                    keycode = keycode[-1]
-                self._queue_event(
-                    KeyboardEvent(
-                        kind="key",
-                        keycode=keycode,
-                        keystate=key_event.keystate,
-                        timestamp=time.time(),
-                    )
-                )
-
         self._release_linux_device()
+
+    def _device_has_keyboard_caps(self, device, evdev_module) -> bool:
+        """Return True if the device reports basic alphanumeric keys."""
+        try:
+            key_caps = device.capabilities().get(evdev_module.ecodes.EV_KEY, [])
+        except Exception:
+            return False
+
+        flat_caps = []
+        for entry in key_caps:
+            if isinstance(entry, tuple):
+                flat_caps.append(entry[0])
+            else:
+                flat_caps.append(entry)
+
+        required = {evdev_module.ecodes.KEY_A, evdev_module.ecodes.KEY_Z, evdev_module.ecodes.KEY_1}
+        return all(code in flat_caps for code in required)
 
     def _find_keyboard(self, evdev_module, input_device_cls):
         devices = [input_device_cls(path) for path in evdev_module.list_devices()]
+        named_keyboards = []
+        capability_keyboards = []
+
         for device in devices:
-            name = device.name.lower()
-            if "mouse" in name or "touchpad" in name:
-                continue
-            if "keyboard" in name:
-                return device
+            name = (device.name or "").lower()
+            if self._device_has_keyboard_caps(device, evdev_module):
+                if "keyboard" in name:
+                    named_keyboards.append(device)
+                else:
+                    capability_keyboards.append(device)
+
+        if named_keyboards:
+            return named_keyboards[0]
+        if capability_keyboards:
+            return capability_keyboards[0]
         return None
 
     def _windows_loop(self) -> None:
