@@ -19,6 +19,11 @@ class App(AppBase):
         self.width = context["screen_width"]
         self.height = context["screen_height"]
         self.context = context
+        config_dir = context.get("CONFIG_DIR")
+        if not config_dir:
+            config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config")
+        self.config_dir = config_dir
+        self.discourse_config_path = os.path.join(self.config_dir, "discourse_login.conf")
         
         # Chat URL for A Lilian Garden Discourse
         self.chat_url = "https://a-lilian-garden.discourse.group/chat/c/blanket-fort/4"
@@ -72,8 +77,7 @@ class App(AppBase):
         
     def load_credentials(self):
         """Load login credentials from config file"""
-        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
-                                   "config", "discourse_login.conf")
+        config_path = self.discourse_config_path
         credentials = {
             "username": "",
             "password": "",
@@ -250,7 +254,7 @@ class App(AppBase):
         
         # Check if credentials are configured
         if not self.credentials["username"] or self.credentials["username"] == "your_username_here":
-            self.error_message = "Please configure login credentials in config/discourse_login.conf"
+            self.error_message = f"Please configure login credentials in {self.discourse_config_path}"
         else:
             self.error_message = "Loading chat..."
             
@@ -909,7 +913,7 @@ class App(AppBase):
             if "configure login" in self.error_message.lower():
                 y_pos += line_height
                 config_lines = [
-                    "1. Edit config/discourse_login.conf",
+                    f"1. Edit {self.discourse_config_path}",
                     "2. Replace 'your_username_here'",
                     "   with your actual username",
                     "3. Add your password and email",
@@ -1282,8 +1286,7 @@ class App(AppBase):
     
     def show_config_info(self):
         """Show configuration file information"""
-        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
-                                   "config", "discourse_login.conf")
+        config_path = self.discourse_config_path
         self.error_message = f"Config file: {config_path}"
         print(f"[Discourse Chat] Config file location: {config_path}")
     
