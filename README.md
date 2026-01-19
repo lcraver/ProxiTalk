@@ -1,7 +1,7 @@
-# ProxiTalk
-This is the repo for ProxiTalk OS.
+<img width="1280" height="640" alt="pt social preview" src="https://github.com/user-attachments/assets/3e889d54-46e6-4c2c-ab8c-cf94973eaa69" />
 
-ProxiTalk is a custom operating system designed for the ProxiTalk "platform", which is a handheld gaming console and communication device.
+# ProxiTalk
+This is the repo for ProxiTalk OS. ProxiTalk is a custom operating system designed for the ProxiTalk "platform", which is a handheld gaming console and communication device.
 
 # Apps Included
 
