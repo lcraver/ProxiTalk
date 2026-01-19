@@ -8,8 +8,7 @@ Please refer to the guides in the sidebar of the wiki!
 
 ## Build Guides
 - [Build - 1. Shopping List](https://github.com/lcraver/ProxiTalk/wiki/Build---1.-Shopping-List) - Everything you need to purchase to build your ProxiTalk
-- [Build - 2. Guide](https://github.com/lcraver/ProxiTalk/wiki/Build---2.-Guide) - Step-by-step assembly instructions
-- [Build - 3. Software Install](https://github.com/lcraver/ProxiTalk/wiki/Build---3.-Software-Install) - Setting up the software on your device
+- [Build - 2. Guide](https://github.com/lcraver/ProxiTalk/wiki/Build---2.-Guide) - Step-by-step instructions for putting it all together!
 
 ## Development
 - [Development - Apps](/Development---Apps) - Guide for developing applications for ProxiTalk
