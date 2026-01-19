@@ -1,5 +1,5 @@
 {
-  "last_launched_app": "wifi_settings",
+  "last_launched_app": "proxi",
   "launcher_selection": 0,
   "hidden_apps": [],
   "created_at": "2025-07-14",
@@ -13,7 +13,10 @@
   "disabled_overlays": [
     "mori"
   ],
-  "tts_engine": "voicevox",
+  "disabled_tts_engines": [
+    "voicevox",
+  ],
+  "tts_engine": "piper",
   "voicevox_speaker_id": 2,
   "piper_model": "C:\\Users\\Pidge\\Documents\\ProxiTalk\\tts\\piper\\en_GB-cori-medium.onnx",
   "pyopenjtalk_voice": "mei_happy.htsvoice",

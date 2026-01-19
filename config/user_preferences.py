@@ -34,6 +34,7 @@ class UserPreferences:
             "pinned_apps": [],
             "disabled_overlays": [],
             "tts_engine": "piper",  # Default TTS engine: "piper", "voicevox", or "openjtalk"
+            "disabled_tts_engines": [],  # Engines to hide even if installed
             "voicevox_speaker_id": 2,  # Default VoiceVox speaker ID
             "piper_model": None,  # Default Piper model path
             "pyopenjtalk_voice": None,  # Default PyOpenJTalk+ voice filename
@@ -192,6 +193,16 @@ class UserPreferences:
             print(f"[Preferences] Invalid TTS engine: {engine}")
             return False
         self._preferences["tts_engine"] = engine
+        return self._save_preferences()
+
+    def get_disabled_tts_engines(self) -> list:
+        """Return a list of engine IDs that should be disabled even if installed"""
+        return self._preferences.get("disabled_tts_engines", [])
+
+    def set_disabled_tts_engines(self, engines: list) -> bool:
+        """Persist the disabled TTS engine list"""
+        safe_engines = list(dict.fromkeys(engines))
+        self._preferences["disabled_tts_engines"] = safe_engines
         return self._save_preferences()
     
     def get_voicevox_speaker_id(self) -> int:

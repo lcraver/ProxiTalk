@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Type
+from typing import Any, Dict, Iterable, Optional, Type
 
 from tts_engines.base import EngineResources, TTSEngine
 from tts_engines.loader import discover_engine_classes
@@ -21,9 +21,30 @@ class TTSEngineManager:
             self._entries[engine_cls.engine_id] = EngineEntry(cls=engine_cls)
         if not self._entries:
             raise RuntimeError("No TTS engines available. Install at least one TTS plug-in.")
+        self._disabled_engine_ids: set[str] = set()
+        pref_disabled: set[str] = set()
+        if resources.user_preferences and hasattr(resources.user_preferences, "get_disabled_tts_engines"):
+            try:
+                pref_disabled = set(resources.user_preferences.get_disabled_tts_engines() or [])
+            except Exception as exc:
+                print(f"[TTS] Warning: unable to read disabled engines from preferences: {exc}")
+
+        self.set_disabled_engines(pref_disabled, persist=False)
         self._current_engine_id: Optional[str] = None
-        default_engine = preferred_engine if preferred_engine in self._entries else next(iter(self._entries))
+        default_engine = self._select_default_engine(preferred_engine)
         self.set_engine(default_engine)
+
+    def _select_default_engine(self, preferred_engine: Optional[str]) -> str:
+        enabled_ids = self.get_available_engine_ids()
+        if preferred_engine and preferred_engine in enabled_ids:
+            return preferred_engine
+        if enabled_ids:
+            return enabled_ids[0]
+
+        # If everything was disabled, fall back to the first discovered engine
+        first_engine = next(iter(self._entries))
+        self._disabled_engine_ids.discard(first_engine)
+        return first_engine
 
     # ----- Internal helpers -----
     def _get_entry(self, engine_id: str) -> Optional[EngineEntry]:
@@ -54,15 +75,64 @@ class TTSEngineManager:
         return method(*args, **kwargs)
 
     # ----- Public API -----
-    def get_available_engine_ids(self) -> list[str]:
+    def get_all_engine_ids(self) -> list[str]:
         return list(self._entries.keys())
+
+    def get_available_engine_ids(self) -> list[str]:
+        return [engine_id for engine_id in self._entries.keys() if engine_id not in self._disabled_engine_ids]
+
+    def get_disabled_engine_ids(self) -> list[str]:
+        return sorted(self._disabled_engine_ids)
 
     def get_current_engine(self) -> Optional[str]:
         return self._current_engine_id
 
+    def set_disabled_engines(self, disabled_ids: Iterable[str], persist: bool = True) -> bool:
+        valid_ids = set(self._entries.keys())
+        normalized_disabled = {engine_id for engine_id in disabled_ids if engine_id in valid_ids}
+
+        if len(normalized_disabled) >= len(valid_ids):
+            print("[TTS] Refusing to disable all engines; keeping at least one enabled")
+            normalized_disabled = set()
+
+        self._disabled_engine_ids = normalized_disabled
+
+        if persist and self.resources.user_preferences and hasattr(self.resources.user_preferences, "set_disabled_tts_engines"):
+            try:
+                self.resources.user_preferences.set_disabled_tts_engines(self.get_disabled_engine_ids())
+            except Exception as exc:
+                print(f"[TTS] Warning: unable to persist disabled engines preference: {exc}")
+
+        enabled_ids = self.get_available_engine_ids()
+        if not enabled_ids:
+            print("[TTS] No enabled engines remain; resetting disabled list")
+            self._disabled_engine_ids = set()
+            enabled_ids = self.get_available_engine_ids()
+
+        if self._current_engine_id and self._current_engine_id not in enabled_ids:
+            fallback_engine = enabled_ids[0]
+            print(f"[TTS] Current engine disabled; switching to '{fallback_engine}'")
+            self.set_engine(fallback_engine)
+
+        return True
+
+    def set_engine_enabled(self, engine_id: str, enabled: bool) -> bool:
+        if engine_id not in self._entries:
+            print(f"[TTS] Unknown engine '{engine_id}'")
+            return False
+        disabled = set(self._disabled_engine_ids)
+        if enabled:
+            disabled.discard(engine_id)
+        else:
+            disabled.add(engine_id)
+        return self.set_disabled_engines(disabled)
+
     def set_engine(self, engine_id: str) -> bool:
         if engine_id not in self._entries:
             print(f"[TTS] Invalid engine: {engine_id}")
+            return False
+        if engine_id in self._disabled_engine_ids:
+            print(f"[TTS] Engine '{engine_id}' is disabled")
             return False
         if self._current_engine_id == engine_id:
             return True
@@ -113,6 +183,7 @@ class TTSEngineManager:
                 "display_name": getattr(entry.cls, "display_name", engine_id),
                 "priority": getattr(entry.cls, "priority", 100),
                 "capabilities": sorted(capability_tags),
+                "enabled": engine_id not in self._disabled_engine_ids,
             }
         return description
 

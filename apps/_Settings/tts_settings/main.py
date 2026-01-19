@@ -17,10 +17,14 @@ class App(AppBase):
     def __init__(self, context):
         super().__init__(context)
         self.name = "TTS Settings"
-        self.current_engine = context["tts"]["get_engine"]()
-        self.available_engines = context["tts"]["get_available_engines"]()
-        self.engine_index = self.available_engines.index(
-            self.current_engine) if self.current_engine in self.available_engines else 0
+        self.engine_descriptions = {}
+        self.all_engines = []
+        self.available_engines = []
+        self.disabled_engines = set()
+        self.engine_index = 0
+        self.engine_manage_index = 0
+        self.current_engine = None
+        self.refresh_engine_state()
         self.voicevox_speaker_id = context["user_preferences"].get_voicevox_speaker_id(
         )
 
@@ -76,17 +80,44 @@ class App(AppBase):
         # Two-panel navigation for PyOpenJTalk+
         self.pyopenjtalk_active_panel = "character"  # "character" or "style"
         self.load_pyopenjtalk_voices()
-
-        self.menu_items = ["Engine", "Test"]
-        if self.current_engine == "voicevox":
-            self.menu_items.insert(1, "Voice")
-        elif self.current_engine == "piper":
-            self.menu_items.insert(1, "Model")
-        elif self.current_engine == "openjtalk":
-            self.menu_items.insert(1, "Voice")
         self.selected_item = 0
         self.in_submenu = False
         self.submenu_type = None
+        self.update_menu_items()
+
+    def refresh_engine_state(self):
+        """Refresh engine lists and indices, honoring disabled engines."""
+        descriptions = self.context["tts"]["describe_engines"]() or {}
+        ordered = sorted(
+            descriptions.items(), key=lambda item: (item[1].get("priority", 100), item[0])
+        )
+        self.engine_descriptions = descriptions
+        self.all_engines = [engine_id for engine_id, _ in ordered]
+
+        disabled_func = self.context["tts"].get("get_disabled_engines")
+        if disabled_func:
+            try:
+                self.disabled_engines = set(disabled_func() or [])
+            except Exception as exc:
+                print(f"[TTS Settings] Failed to load disabled engines: {exc}")
+                self.disabled_engines = set()
+        else:
+            self.disabled_engines = set()
+
+        self.available_engines = [engine for engine in self.all_engines if engine not in self.disabled_engines]
+        if not self.available_engines:
+            self.available_engines = list(self.all_engines)
+
+        self.current_engine = self.context["tts"]["get_engine"]()
+        if self.current_engine in self.available_engines:
+            self.engine_index = self.available_engines.index(self.current_engine)
+        else:
+            self.engine_index = 0 if self.available_engines else 0
+
+        if self.all_engines:
+            self.engine_manage_index = min(self.engine_manage_index, len(self.all_engines) - 1)
+        else:
+            self.engine_manage_index = 0
 
     # --- Generic TTS manager helpers --- #
     def _get_engine_api(self, engine_id):
@@ -296,13 +327,14 @@ class App(AppBase):
 
     def update_menu_items(self):
         """Update menu items based on current engine"""
-        self.menu_items = ["Engine", "Test"]
+        self.menu_items = ["Engine", "Engines", "Test"]
+        insert_at = 2
         if self.current_engine == "voicevox":
-            self.menu_items.insert(1, "Voice")
+            self.menu_items.insert(insert_at, "Voice")
         elif self.current_engine == "piper":
-            self.menu_items.insert(1, "Model")
+            self.menu_items.insert(insert_at, "Model")
         elif self.current_engine == "openjtalk":
-            self.menu_items.insert(1, "Voice")
+            self.menu_items.insert(insert_at, "Voice")
         if self.selected_item >= len(self.menu_items):
             self.selected_item = len(self.menu_items) - 1
 
@@ -398,6 +430,36 @@ class App(AppBase):
                 else:
                     self.context["drawing"]["draw_text"](
                         text, 2, y, self.context["fonts"]["small"])
+
+        elif self.submenu_type == "engine_manage":
+            # Enable/disable installed engines
+            title = "Engines"
+            self.context["drawing"]["draw_text"](
+                title, 2, 2, self.context["fonts"]["small"])
+
+            start_y = 18
+            if self.all_engines:
+                for i, engine in enumerate(self.all_engines):
+                    y = start_y + i * 8
+                    prefix = "> " if i == self.engine_manage_index else "  "
+                    enabled = engine not in self.disabled_engines
+                    status = "Enabled" if enabled else "Disabled"
+                    text = f"{prefix}{engine.title()} ({status})"
+
+                    if i == self.engine_manage_index:
+                        self.context["drawing"]["draw_text_inverted"](
+                            text, 2, y, self.context["fonts"]["small"])
+                    else:
+                        self.context["drawing"]["draw_text"](
+                            text, 2, y, self.context["fonts"]["small"])
+
+                self.context["drawing"]["draw_text"](
+                    "Enter: Toggle", 2, 56, self.context["fonts"]["small"])
+                self.context["drawing"]["draw_text"](
+                    "Keep one enabled", 2, 64, self.context["fonts"]["small"])
+            else:
+                self.context["drawing"]["draw_text"](
+                    "No engines found", 2, start_y, self.context["fonts"]["small"])
 
         elif self.submenu_type == "voice":
             # VoiceVox voice selection submenu
@@ -960,8 +1022,13 @@ class App(AppBase):
             selected_menu = self.menu_items[self.selected_item]
 
             if selected_menu == "Engine":
+                self.refresh_engine_state()
                 self.in_submenu = True
                 self.submenu_type = "engine"
+            elif selected_menu == "Engines":
+                self.refresh_engine_state()
+                self.in_submenu = True
+                self.submenu_type = "engine_manage"
             elif selected_menu == "Voice":
                 if self.current_engine == "voicevox":
                     # Use cached data, optionally refresh if needed
@@ -1108,6 +1175,9 @@ class App(AppBase):
             if self.submenu_type == "engine":
                 self.engine_index = (self.engine_index -
                                      1) % len(self.available_engines)
+            elif self.submenu_type == "engine_manage":
+                if self.all_engines:
+                    self.engine_manage_index = (self.engine_manage_index - 1) % len(self.all_engines)
             elif self.submenu_type == "model":
                 if self.piper_models:
                     self.current_piper_model_index = (
@@ -1155,6 +1225,9 @@ class App(AppBase):
             if self.submenu_type == "engine":
                 self.engine_index = (self.engine_index +
                                      1) % len(self.available_engines)
+            elif self.submenu_type == "engine_manage":
+                if self.all_engines:
+                    self.engine_manage_index = (self.engine_manage_index + 1) % len(self.all_engines)
             elif self.submenu_type == "model":
                 if self.piper_models:
                     self.current_piper_model_index = (
@@ -1239,6 +1312,39 @@ class App(AppBase):
                 self.submenu_type = None
                 self.active_panel = "voice"
                 self.pyopenjtalk_active_panel = "character"
+            elif self.submenu_type == "engine_manage":
+                if not self.all_engines:
+                    return
+
+                target_engine = self.all_engines[self.engine_manage_index]
+                updated_disabled = set(self.disabled_engines)
+
+                if target_engine in updated_disabled:
+                    updated_disabled.remove(target_engine)
+                else:
+                    if len(self.available_engines) <= 1:
+                        print("[TTS Settings] Cannot disable the last enabled engine")
+                        return
+                    updated_disabled.add(target_engine)
+
+                setter = self.context["tts"].get("set_disabled_engines")
+                if setter:
+                    success = setter(list(updated_disabled))
+                    if success is False:
+                        print("[TTS Settings] Failed to update engine availability")
+                else:
+                    print("[TTS Settings] Engine availability control unavailable")
+                    return
+
+                # Reload state from manager (may have adjusted the disabled list)
+                self.refresh_engine_state()
+                try:
+                    self.context["user_preferences"].set_disabled_tts_engines(list(self.disabled_engines))
+                except Exception as exc:
+                    print(f"[TTS Settings] Warning: failed to save disabled engines: {exc}")
+
+                # If current engine was disabled, engine_index will be refreshed accordingly
+                self.update_menu_items()
             elif self.submenu_type == "model":
                 # Apply selected Piper model
                 if self.piper_models and self.current_piper_model_index < len(self.piper_models):
