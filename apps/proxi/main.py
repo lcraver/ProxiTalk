@@ -510,6 +510,17 @@ class App(AppBase):
         self.update_romanji_preview()  # Update Japanese preview
         self.draw_interface("Input", "")
 
+    def clear_transient_ui(self):
+        """Clear overlay-driven UI state that should not survive app exit."""
+        self.tts_active = False
+        self.tts_state = "idle"
+        self.cursor_visible = False
+        self.draw["begin_batch"]()
+        try:
+            self.draw["clear_overlay_area"](0, 0, self.width, self.height)
+        finally:
+            self.draw["end_batch"]()
+
     def start(self):
         print("[Proxi] Started")
         # Initialize cursor state
@@ -564,8 +575,10 @@ class App(AppBase):
     
     def onkeydown(self, keycode):
         if keycode == 'KEY_ESC':
+            self.clear_transient_ui()
             self.draw_interface("Launcher", "Switching to Launcher...")
             self.context["app_manager"].swap_app_async("proxi", "launcher", update_rate_hz=20.0, delay=0.1)
+            return
         
         if keycode == 'KEY_TAB' or keycode == 'KEY_RIGHTALT' or keycode == 'KEY_LEFTALT':
             suggestion = self.get_autocomplete_suggestion(self.currentline)
@@ -622,5 +635,5 @@ class App(AppBase):
         if self.tts_thread and self.tts_thread.is_alive():
             print("[Proxi] Waiting for TTS worker thread to complete...")
             self.tts_thread.join(timeout=2.0)  # Wait up to 2 seconds
-        
-        self.tts_active = False
+
+        self.clear_transient_ui()

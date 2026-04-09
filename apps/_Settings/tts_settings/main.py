@@ -138,6 +138,9 @@ class App(AppBase):
             print(f"[TTS Settings] Failed to call {method_name} on {target_engine}: {exc}")
             return default
 
+    def _is_engine_enabled(self, engine_id):
+        return engine_id not in self.disabled_engines
+
     def find_current_pyopenjtalk_voice_position(self, current_voice):
         """Find the character and style indices for current PyOpenJTalk+ voice"""
         if not current_voice or not self.pyopenjtalk_grouped_voices:
@@ -175,6 +178,13 @@ class App(AppBase):
 
     def load_voicevox_speakers(self):
         """Load VoiceVox speakers with names from the API (now cached)"""
+        if not self._is_engine_enabled(self.VOICEVOX_ENGINE_ID):
+            self.voicevox_speakers = []
+            self.voicevox_voices = []
+            self.current_voice = None
+            print("[TTS Settings] Skipping VoiceVox preload because the engine is disabled")
+            return
+
         try:
             voice_data = self._call_engine_api(
                 "list_voices",
@@ -212,6 +222,12 @@ class App(AppBase):
 
     def load_piper_models(self):
         """Load available Piper models"""
+        if not self._is_engine_enabled(self.PIPER_ENGINE_ID):
+            self.piper_models = []
+            self.current_piper_model_index = 0
+            print("[TTS Settings] Skipping Piper preload because the engine is disabled")
+            return
+
         try:
             self.piper_models = self._call_engine_api(
                 "list_models",
@@ -245,6 +261,14 @@ class App(AppBase):
 
     def load_pyopenjtalk_voices(self):
         """Load available PyOpenJTalk+ voices and group them by character"""
+        if not self._is_engine_enabled(self.OPENJTALK_ENGINE_ID):
+            self.pyopenjtalk_voices = []
+            self.pyopenjtalk_grouped_voices = []
+            self.current_pyopenjtalk_character_index = 0
+            self.current_pyopenjtalk_style_index = 0
+            print("[TTS Settings] Skipping PyOpenJTalk+ preload because the engine is disabled")
+            return
+
         try:
             raw_voices = self._call_engine_api(
                 "list_voices",
@@ -395,7 +419,7 @@ class App(AppBase):
 
         # Menu items
         has_info = (self.current_engine == "voicevox" and self.voicevox_speakers) or (self.current_engine == "piper") or (self.current_engine == "openjtalk")
-        start_y = 42 if has_info else 38
+        start_y = 32
         for i, item in enumerate(self.menu_items):
             y = start_y + i * 8
             prefix = "> " if i == self.selected_item else "  "

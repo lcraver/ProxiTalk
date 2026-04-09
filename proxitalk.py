@@ -936,6 +936,7 @@ def play_startup_sequence():
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 from config.wordmap import word_map
+from utils.japanese import convert_romanji_to_hiragana
 
 # Initialize user preferences first so TTS manager can access preferred models
 from config.user_preferences import initialize_preferences
@@ -985,6 +986,23 @@ def apply_word_map(text, word_map):
 def hash_text(text):
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
+
+def preprocess_tts_text(text, engine_id=None):
+    """Normalize text before synthesis based on the active engine."""
+    normalized_text = apply_word_map(text, word_map)
+    current_engine = engine_id or tts_manager.get_current_engine()
+
+    if current_engine in {"voicevox", "openjtalk"}:
+        converted_text = convert_romanji_to_hiragana(normalized_text)
+        if converted_text != normalized_text:
+            print(
+                f"[TTS] Preprocessed Japanese text for {current_engine}: "
+                f"'{normalized_text}' -> '{converted_text}'"
+            )
+        return converted_text
+
+    return normalized_text
+
 # Initialize shared audio system for playback and caching helpers
 initialize_audio_system()
 
@@ -1005,13 +1023,14 @@ def run_tts(text, background=False, skip_cache=False):
     
     # Create cache key based on text, current TTS engine, and engine-specific identity info
     current_engine = tts_manager.get_current_engine()
+    processed_text = preprocess_tts_text(text, current_engine)
     engine_suffix = f"_{current_engine}" if current_engine else ""
 
     identity = tts_manager.get_cache_identity()
     for key, value in sorted(identity.items()):
         engine_suffix += f"_{key}-{value}"
     
-    cache_key = hash_text(text + engine_suffix)
+    cache_key = hash_text(processed_text + engine_suffix)
     cached_file = os.path.join(CACHE_DIR, cache_key + ".raw")
 
     # Check cache only if not skipping cache
@@ -1045,8 +1064,7 @@ def run_tts(text, background=False, skip_cache=False):
             display_queue.put(("draw_icon", generating_icon, 0, height - 8))
 
         try:
-            mappedText = apply_word_map(text, word_map)
-            raw_audio = tts_manager.synthesize(mappedText)
+            raw_audio = tts_manager.synthesize(processed_text)
             if not background:
                 display_queue.put(("clear_icon",))
 

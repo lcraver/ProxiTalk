@@ -22,6 +22,7 @@ class TTSEngineManager:
         if not self._entries:
             raise RuntimeError("No TTS engines available. Install at least one TTS plug-in.")
         self._disabled_engine_ids: set[str] = set()
+        self._current_engine_id: Optional[str] = None
         pref_disabled: set[str] = set()
         if resources.user_preferences and hasattr(resources.user_preferences, "get_disabled_tts_engines"):
             try:
@@ -30,7 +31,6 @@ class TTSEngineManager:
                 print(f"[TTS] Warning: unable to read disabled engines from preferences: {exc}")
 
         self.set_disabled_engines(pref_disabled, persist=False)
-        self._current_engine_id: Optional[str] = None
         default_engine = self._select_default_engine(preferred_engine)
         self.set_engine(default_engine)
 
