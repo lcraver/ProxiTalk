@@ -349,6 +349,9 @@ class App(AppBase):
             self.pyopenjtalk_voices = []
             self.pyopenjtalk_grouped_voices = []
 
+    def start(self):
+        self.render()
+
     def update_menu_items(self):
         """Update menu items based on current engine"""
         self.menu_items = ["Engine", "Engines", "Test"]

@@ -1,10 +1,10 @@
 {
-  "last_launched_app": "tts_settings",
+  "last_launched_app": "dungeon_crawler",
   "launcher_selection": 0,
   "hidden_apps": [],
   "pinned_apps": [],
   "disabled_overlays": [],
-  "tts_engine": "openjtalk",
+  "tts_engine": "piper",
   "disabled_tts_engines": [
     "voicevox"
   ],
@@ -12,5 +12,6 @@
   "piper_model": null,
   "pyopenjtalk_voice": null,
   "keyboard_device_path": null,
-  "auto_sleep_minutes": 5
+  "auto_sleep_minutes": 5,
+  "debug_piper_wav": true
 }

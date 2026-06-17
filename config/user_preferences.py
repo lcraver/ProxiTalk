@@ -40,6 +40,7 @@ class UserPreferences:
             "pyopenjtalk_voice": None,  # Default PyOpenJTalk+ voice filename
             "keyboard_device_path": None,  # Optional override for /dev/input/eventX
             "auto_sleep_minutes": 5,  # Minutes of inactivity before sleep (0 disables)
+            "debug_piper_wav": False,  # Write .wav files alongside .raw cache entries for debugging
         }
     
     def _save_preferences(self) -> bool:

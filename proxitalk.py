@@ -253,6 +253,18 @@ speaking_icon = load_base_icon("notes")
 draw_lock = threading.RLock()
 display_queue = queue.Queue()
 
+# Single-slot "latest full frame" mechanism for apps that redraw the whole
+# screen every tick (e.g. raycasters/games). Submitting a new frame replaces
+# any not-yet-rendered previous frame instead of queuing behind it, so the
+# display thread never works through a backlog of stale frames.
+_latest_full_frame = None
+_full_frame_lock = threading.Lock()
+
+def set_full_frame(img):
+    global _latest_full_frame
+    with _full_frame_lock:
+        _latest_full_frame = img
+
 width = disp.width
 height = disp.height
 
@@ -442,38 +454,14 @@ _batch_mode = False
 _batch_operations = []
 
 def begin_batch():
-    """Start batching drawing operations to reduce hardware updates"""
-    global _batch_mode, _batch_operations
-    _batch_mode = True
-    _batch_operations = []
+    """No-op: the display thread now drains and coalesces all queued
+    drawing commands into a single hardware update automatically, so
+    apps no longer need to bracket draws with begin_batch/end_batch."""
+    pass
 
 def end_batch():
-    """Execute all batched operations at once"""
-    global _batch_mode, _batch_operations
-    if not _batch_mode:
-        return
-    
-    _batch_mode = False
-    
-    # Execute all batched operations
-    for op_type, args in _batch_operations:
-        if op_type == "text":
-            layer, font, text, x, y, fill = args
-            display_draw_text_immediate(layer, font, text, x, y, fill)
-        elif op_type == "text_inverted":
-            layer_draw, layer_image, font, text, x, y, padding = args
-            display_draw_text_inverted_immediate(layer_draw, layer_image, font, text, x, y, padding)
-        elif op_type == "area":
-            layer, x, y, width, height, fill = args
-            display_draw_area_immediate(layer, x, y, width, height, fill)
-        elif op_type == "icon":
-            layer, icon_img, x, y = args
-            display_draw_icon_immediate(layer, icon_img, x, y)
-    
-    _batch_operations = []
-    
-    # Single update at the end
-    update_display(force=True)
+    """No-op: see begin_batch."""
+    pass
 
 # Wrap text to fit screen width with caching
 _text_wrap_cache = {}
@@ -750,7 +738,18 @@ def display_thread_func():
             except queue.Empty:
                 cmd = None
 
-            if cmd:
+            # Drain any additional queued commands so a burst of draw calls
+            # (one app frame) results in a single hardware update instead of
+            # one per command (each capped at the 12fps hardware refresh rate).
+            pending_cmds = [cmd] if cmd else []
+            while True:
+                try:
+                    pending_cmds.append(display_queue.get_nowait())
+                except queue.Empty:
+                    break
+
+            should_exit = False
+            for cmd in pending_cmds:
                 # print(f"[Display] Command received: {cmd}", flush=True)
                 match cmd[0]:
                     case "draw_base_text":
@@ -789,10 +788,8 @@ def display_thread_func():
                         display_draw_icon(overlay_layer, img, x, y)
                     case "clear_base":
                         display_draw_area(base_draw, 0, 0, 128, 64, fill=0)
-                        update_display(force=True)
                     case "clear_base_2":
                         display_draw_area(base_draw_2, 0, 0, 128, 64, fill=0)
-                        update_display(force=True)
                     case "clear_base_area":
                         _, x, y, width, height = cmd
                         display_draw_area(base_draw, x, y, width, height, fill=0)
@@ -828,7 +825,11 @@ def display_thread_func():
                         end_batch()
                     case "exit":
                         print("[Display Thread] Exiting on exit command", flush=True)
+                        should_exit = True
                         break
+
+            if should_exit:
+                break
 
             now = time.time()
             # Cursor blinking - only if cursor is enabled and visible
@@ -841,6 +842,15 @@ def display_thread_func():
                 # Handle cursor state changes immediately
                 display_draw_blinking_cursor(lastDrawX, lastDrawY, False)
             
+            global _latest_full_frame
+            if _latest_full_frame is not None:
+                with _full_frame_lock:
+                    frame, _latest_full_frame = _latest_full_frame, None
+                if frame is not None:
+                    with draw_lock:
+                        base_layer.paste(frame)
+                    mark_display_dirty(0, 0, width, height)
+
             update_display()
             last_display_update = now
 
@@ -1086,6 +1096,12 @@ def run_tts(text, background=False, skip_cache=False):
                 with open(cached_file, "wb") as f:
                     f.write(audio_to_cache)
 
+                # Optionally also write a .wav file for debugging
+                if user_preferences and user_preferences.get_preference("debug_piper_wav", False):
+                    wav_debug_file = os.path.join(CACHE_DIR, cache_key + ".wav")
+                    with open(wav_debug_file, "wb") as f:
+                        f.write(wrap_raw_audio_as_wav(audio_to_cache).getvalue())
+
                 if not background:
                     display_queue.put(("set_screen", f"Talking ({tts_manager.get_current_engine().title()})", text))
                     display_queue.put(("draw_icon", speaking_icon, 0, height - 8))
@@ -1330,6 +1346,8 @@ def main():
             # Region-based updates (for efficiency)
             "update_region": lambda x, y, width, height: display_queue.put(("update_region", x, y, width, height)),
             "mark_dirty": lambda x, y, width, height: mark_display_dirty(x, y, width, height),
+            "pending_frames": lambda: display_queue.qsize(),
+            "set_full_frame": lambda img: set_full_frame(img),
         },
         "get_text_size": get_text_size,
         "hash_text": hash_text,
@@ -1526,5 +1544,5 @@ def main():
 
 if __name__ == "__main__":
     if not is_admin():
-        print("⚠️ This script needs to be run as Administrator on Windows.")
+        print("[Warning] This script needs to be run as Administrator on Windows.")
     main()
