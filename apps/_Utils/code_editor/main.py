@@ -1,4 +1,6 @@
 from interfaces import AppBase
+from utils.key_repeat import KeyRepeat
+from config.keymap import key_map
 import os
 import time
 
@@ -7,7 +9,6 @@ class App(AppBase):
         super().__init__(context)
         self.width = context["screen_width"]
         self.height = context["screen_height"]
-        self.play_sfx = context["audio"]["play_sfx"]
         self.path = context["app_path"]
         
         # Editor state
@@ -46,9 +47,15 @@ class App(AppBase):
         self.visible_lines_insert = 10  # Number of lines visible on screen
         self.status_height = 3  # Lines reserved for status bar
         
-        # TTS control
-        self.tts_enabled = False  # Toggle for voice announcements
-        
+        # Hold-to-repeat for navigation and backspace
+        self._key_repeat = KeyRepeat()
+        self._repeatable_keys = {
+            "KEY_BACKSPACE",
+            "KEY_UP", "KEY_DOWN", "KEY_LEFT", "KEY_RIGHT",
+            "KEY_W", "KEY_A", "KEY_S", "KEY_D",
+            "KEY_PGUP", "KEY_PGDOWN",
+        }
+
         # Cursor blinking
         self.cursor_blink_timer = 0
         self.cursor_visible = True
@@ -67,19 +74,16 @@ class App(AppBase):
         """Mark the editor for redraw on next update cycle"""
         self.needs_redraw = True
         
-    def speak(self, text, background=True):
-        """Speak text if TTS is enabled"""
-        if self.tts_enabled:
-            self.context["tts"]["run"](text, background=background)
-    
     def update(self):
         """Update the editor display"""
-        # Update display every few ticks to reduce flicker
         if hasattr(self, 't'):
             self.t += 1
         else:
             self.t = 0
-        
+
+        for keycode in self._key_repeat.tick():
+            self._dispatch_key(keycode)
+
         # Handle cursor blinking only in insert mode
         if self.mode == "insert":
             current_pos = (self.cursor_line, self.cursor_col)
@@ -261,14 +265,12 @@ class App(AppBase):
             file_status = f"F: {self.filename or 'untitled'}"
             if self.file_modified:
                 file_status += "*"
-            if self.tts_enabled:
-                file_status += " [TTS]"
             self.context["drawing"]["draw_text"](file_status, 2, status_y, font, fill=0)
             
             cursor_info = f"Ln {self.cursor_line + 1}, Col {self.cursor_col + 1}"
             self.context["drawing"]["draw_text"](cursor_info, 2, status_y + line_height, font, fill=0)
             
-            commands = "I:Ins O:Open ALT+S:Save F:Find G:Goto Q:Quit"
+            commands = "I:Ins O:Open A+S:Save F:Find G:Goto Q:Quit"
             self.context["drawing"]["draw_text"](commands, 2, status_y + line_height * 2, font, fill=0)
             
         elif self.mode == "insert":
@@ -394,11 +396,17 @@ class App(AppBase):
         # Draw the inverted text image using context drawing
         self.context["drawing"]["draw_image"](bg_img, x-1, y)
     
+    def onkeydown(self, keycode):
+        """Handle key presses."""
+        if keycode in self._repeatable_keys:
+            self._key_repeat.press(keycode)
+        self._dispatch_key(keycode)
+
     def onkeyup(self, keycode):
-        """Handle key releases"""
-        # Only mark for redraw if the key actually changes something visible
-        # Don't redraw for every key - be more selective
-        
+        """Handle key releases."""
+        self._key_repeat.release(keycode)
+
+    def _dispatch_key(self, keycode):
         if self.mode == "normal":
             self.handle_normal_mode(keycode)
         elif self.mode == "insert":
@@ -420,8 +428,7 @@ class App(AppBase):
             self.mode = "insert"
             self.cursor_blink_timer = 0
             self.cursor_visible = True
-            self.speak("Insert mode")
-            self.mark_for_redraw()  # Mode change requires redraw
+            self.mark_for_redraw()
             
         elif keycode == "KEY_O":
             self.mode = "browse"
@@ -449,15 +456,10 @@ class App(AppBase):
             self.goto_buffer = ""
             self.mark_for_redraw()  # Mode change requires redraw
             
-        elif keycode == "KEY_T":
-            self.tts_enabled = not self.tts_enabled
-            status = "enabled" if self.tts_enabled else "disabled"
-            self.speak(f"TTS {status}")
-            self.mark_for_redraw()  # Status change requires redraw
             
         elif keycode == "KEY_Q":
             if self.file_modified:
-                self.speak("File has unsaved changes. Save first with S.")
+                print("[Code Editor] File has unsaved changes. Save first with ALT+S.")
             else:
                 # Use context drawing to show transition message
                 self.context["app_manager"].swap_app_async("code_editor", "launcher", update_rate_hz=20.0, delay=0.1)
@@ -495,9 +497,9 @@ class App(AppBase):
         """Handle keys in insert mode"""
         if keycode == "KEY_ESC":
             self.mode = "normal"
-            self.cursor_visible = False  # Hide cursor in normal mode
-            self.speak("Normal mode")
-            self.mark_for_redraw()  # Mode change requires redraw
+            self.cursor_visible = False
+            self._key_repeat.release_all()
+            self.mark_for_redraw()
             return
             
         # Handle special keys - these modify content so need redraw
@@ -524,7 +526,7 @@ class App(AppBase):
             # Don't redraw for cursor movement in insert mode - cursor blink handles it
         else:
             # Handle character input - this modifies content so needs redraw
-            char = self.keycode_to_char(keycode)
+            char = key_map.get(keycode, "")
             if char:
                 self.insert_text(char)
                 self.mark_for_redraw()
@@ -549,7 +551,7 @@ class App(AppBase):
                 self.mark_for_redraw()  # Buffer change requires redraw
             return
             
-        char = self.keycode_to_char(keycode)
+        char = key_map.get(keycode, "")
         if char and char.isprintable():
             self.save_buffer += char
             self.mark_for_redraw()  # Buffer change requires redraw
@@ -574,7 +576,7 @@ class App(AppBase):
                 self.mark_for_redraw()  # Buffer change requires redraw
             return
             
-        char = self.keycode_to_char(keycode)
+        char = key_map.get(keycode, "")
         if char and char.isprintable():
             self.open_buffer += char
             self.mark_for_redraw()  # Buffer change requires redraw
@@ -607,7 +609,7 @@ class App(AppBase):
             self.mark_for_redraw()  # Cursor movement requires redraw
             return
             
-        char = self.keycode_to_char(keycode)
+        char = key_map.get(keycode, "")
         if char and char.isprintable():
             self.find_buffer += char
             self.mark_for_redraw()  # Buffer change requires redraw
@@ -635,7 +637,7 @@ class App(AppBase):
             return
             
         # Only allow digits for line numbers
-        char = self.keycode_to_char(keycode)
+        char = key_map.get(keycode, "")
         if char and char.isdigit():
             self.goto_buffer += char
             self.mark_for_redraw()  # Buffer change requires redraw
@@ -766,31 +768,9 @@ class App(AppBase):
             self.browser_selection = 0
             self.browser_scroll = 0
             
-            self.speak(f"Browsing {len(dirs)} folders and {len(files)} files")
-            
         except Exception as e:
-            self.speak(f"Error accessing directory: {str(e)}")
+            print(f"[Code Editor] Error accessing directory: {str(e)}")
             self.mode = "normal"
-    
-    def keycode_to_char(self, keycode):
-        """Convert keycode to character"""
-        # Simple mapping for basic characters
-        key_map = {
-            "KEY_SPACE": " ",
-            "KEY_A": "a", "KEY_B": "b", "KEY_C": "c", "KEY_D": "d", "KEY_E": "e",
-            "KEY_F": "f", "KEY_G": "g", "KEY_H": "h", "KEY_I": "i", "KEY_J": "j",
-            "KEY_K": "k", "KEY_L": "l", "KEY_M": "m", "KEY_N": "n", "KEY_O": "o",
-            "KEY_P": "p", "KEY_Q": "q", "KEY_R": "r", "KEY_S": "s", "KEY_T": "t",
-            "KEY_U": "u", "KEY_V": "v", "KEY_W": "w", "KEY_X": "x", "KEY_Y": "y",
-            "KEY_Z": "z",
-            "KEY_0": "0", "KEY_1": "1", "KEY_2": "2", "KEY_3": "3", "KEY_4": "4",
-            "KEY_5": "5", "KEY_6": "6", "KEY_7": "7", "KEY_8": "8", "KEY_9": "9",
-            "KEY_SEMICOLON": ";", "KEY_APOSTROPHE": "'", "KEY_COMMA": ",",
-            "KEY_PERIOD": ".", "KEY_SLASH": "/", "KEY_BACKSLASH": "\\",
-            "KEY_LEFTBRACE": "[", "KEY_RIGHTBRACE": "]", "KEY_MINUS": "-",
-            "KEY_EQUAL": "=", "KEY_GRAVE": "`"
-        }
-        return key_map.get(keycode, "")
     
     def move_cursor(self, line_delta, col_delta):
         """Move cursor by given deltas"""
@@ -908,10 +888,10 @@ class App(AppBase):
             
             self.filename = filename
             self.file_modified = False
-            self.speak(f"File saved as {filename}")
-            
+            print(f"[Code Editor] Saved {filename}")
+
         except Exception as e:
-            self.speak(f"Error saving file: {str(e)}")
+            print(f"[Code Editor] Error saving file: {str(e)}")
     
     def open_file(self, filename):
         """Open a file for editing"""
@@ -959,7 +939,6 @@ class App(AppBase):
                     # Launch video player
                     print(f"[Code Editor] Detected video file: {filepath}")
                     print(f"[Code Editor] Available apps: {[app['name'] for app in self.context['apps']['all']]}")
-                    self.speak(f"Opening video {os.path.basename(filepath)}")
                     
                     # Store the file path for the video player to pick up
                     if not hasattr(self.context, 'pending_video_file'):
@@ -985,12 +964,12 @@ class App(AppBase):
                 self.filename = os.path.basename(filepath)
                 self.current_directory = os.path.dirname(filepath)
                 self.file_modified = False
-                self.speak(f"Opened {self.filename}")
+                print(f"[Code Editor] Opened {self.filename}")
             else:
-                self.speak("File not found")
-                
+                print("[Code Editor] File not found")
+
         except Exception as e:
-            self.speak(f"Error opening file: {str(e)}")
+            print(f"[Code Editor] Error opening file: {str(e)}")
     
     def perform_search(self):
         """Search for text in the document"""
