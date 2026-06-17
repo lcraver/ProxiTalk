@@ -12,6 +12,8 @@ import requests
 from PIL import Image
 import io
 from utils.image_utils import AppImageUtils
+from utils.text_input import TextInput
+from utils.key_repeat import KeyRepeat
 
 class App(AppBase):
     def __init__(self, context):
@@ -44,7 +46,17 @@ class App(AppBase):
         # Input state
         self.input_mode = False
         self.input_buffer = ""
-        
+        japanese_path = context["AUTOCOMPLETE_PATH"].replace("autocomplete_words.txt", "autocomplete_words_japanese.txt")
+        self.text_input = TextInput.with_autocomplete(
+            english_path=context["AUTOCOMPLETE_PATH"],
+            japanese_path=japanese_path,
+        )
+        self.text_input.on_change = self._on_input_change
+        self.text_input.on_submit = self._on_input_submit
+        self.text_input.on_cancel = self._on_input_cancel
+
+        self.scroll_repeat = KeyRepeat()
+
         # Cursor blinking for input
         self.cursor_blink_timer = 0
         self.cursor_visible = True
@@ -71,7 +83,8 @@ class App(AppBase):
         
         # Session cache file path
         self.session_cache_path = os.path.join(os.path.dirname(__file__), "session_cache.json")
-        
+        self.messages_cache_path = os.path.join(os.path.dirname(__file__), "messages_cache.json")
+
         # Load cached session on startup
         self.load_session_cache()
         
@@ -209,6 +222,34 @@ class App(AppBase):
             print(f"[Discourse Chat] Failed to load session cache: {e}")
             return False
     
+    def save_messages_cache(self):
+        try:
+            # Strip non-serialisable image data before saving
+            serialisable = []
+            for msg in self.messages:
+                entry = {k: v for k, v in msg.items() if k != 'images'}
+                serialisable.append(entry)
+            with open(self.messages_cache_path, 'w', encoding='utf-8') as f:
+                json.dump({'messages': serialisable, 'timestamp': time.time()}, f)
+        except Exception as e:
+            print(f"[Discourse Chat] Failed to save messages cache: {e}")
+
+    def load_messages_cache(self):
+        try:
+            if not os.path.exists(self.messages_cache_path):
+                return False
+            with open(self.messages_cache_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            # Accept cached messages up to 24 hours old
+            if time.time() - data.get('timestamp', 0) > 86400:
+                return False
+            self.messages = data.get('messages', [])
+            print(f"[Discourse Chat] Loaded {len(self.messages)} messages from cache")
+            return bool(self.messages)
+        except Exception as e:
+            print(f"[Discourse Chat] Failed to load messages cache: {e}")
+            return False
+
     def generate_test_messages(self):
         """Generate test messages for debug mode"""
         import random
@@ -249,86 +290,70 @@ class App(AppBase):
         return messages
         
     def start(self):
-        """Initialize the browser app"""
         print("[Discourse Chat] Started")
-        
-        # Check if credentials are configured
+
         if not self.credentials["username"] or self.credentials["username"] == "your_username_here":
             self.error_message = f"Please configure login credentials in {self.discourse_config_path}"
-        else:
-            self.error_message = "Loading chat..."
-            
-        self.refresh_display()
-        
-        # Start loading messages if credentials are available
-        if self.credentials["username"] and self.credentials["username"] != "your_username_here":
-            self.fetch_messages_async()
-        
+            self.refresh_display()
+            return
+
+        # Show cached messages immediately so the screen isn't blank
+        if self.load_messages_cache():
+            self.scroll_to_bottom()
+            self.refresh_display()
+
+        self.fetch_messages_async()
+
     def fetch_messages_async(self):
-        """Fetch messages in a separate thread"""
+        """Fetch fresh messages in a background thread."""
         def fetch_worker():
             try:
-                self.loading = True
-                self.error_message = "Connecting to chat..."
-                
-                # Debug mode: use test messages instead of API
+                # Only show loading spinner if we have nothing to display yet
+                if not self.messages:
+                    self.loading = True
+                    self.error_message = "Connecting to chat..."
+
                 if self.debug_mode:
-                    print("[Discourse Chat] Debug mode: using test messages")
+                    self.loading = True
                     self.error_message = "Loading test messages..."
-                    time.sleep(1)  # Simulate loading time
-                    
-                    messages = self.generate_test_messages()
-                    self.messages = messages
+                    time.sleep(1)
+                    self.messages = self.generate_test_messages()
                     self.loading = False
                     self.error_message = ""
                     self.scroll_to_bottom()
+                    self.save_messages_cache()
                     self.refresh_display()
                     return
-                
-                # Production mode: use real API
-                # First, try to use cached session if not already logged in
+
+                # Session is already loaded from __init__ via load_session_cache().
+                # Only log in if that failed.
                 if not self.logged_in:
-                    print("[Discourse Chat] Attempting to use cached session...")
-                    if self.load_session_cache():
-                        # Test if cached session is still valid by trying to fetch messages
-                        test_messages = self.fetch_chat_messages()
-                        if test_messages and len(test_messages) > 0 and not any('Unable to fetch messages' in msg.get('content', '') for msg in test_messages):
-                            print("[Discourse Chat] Cached session is valid")
-                            self.messages = test_messages
-                            self.loading = False
-                            self.error_message = ""
-                            self.scroll_to_bottom()
-                            self.refresh_display_smart()  # Use smart refresh for callbacks
-                            return
-                        else:
-                            print("[Discourse Chat] Cached session invalid, need fresh login")
-                            self.logged_in = False
-                            self.csrf_token = None
-                    
-                    # If cached session failed, do fresh login
+                    print("[Discourse Chat] No valid session, logging in...")
                     if not self.login():
+                        self.loading = False
+                        self.refresh_display()
                         return
-                
-                # Fetch chat messages
-                self.error_message = "Loading messages..."
+
                 messages = self.fetch_chat_messages()
-                
-                if messages:
+                if messages and not any('Unable to fetch messages' in m.get('content', '') for m in messages):
                     self.messages = messages
-                    self.loading = False
+                    self.save_messages_cache()
                     self.error_message = ""
-                    # Auto-scroll to show latest messages immediately
-                    self.scroll_to_bottom()
-                    self.refresh_display_smart()  # Use smart refresh for async callbacks
                 else:
-                    self.loading = False
-                    self.error_message = "No messages found or access denied"
-                
+                    # Keep whatever we already have (cached messages)
+                    if not self.messages:
+                        self.error_message = "No messages found or access denied"
+
+                self.loading = False
+                self.scroll_to_bottom()
+                self.refresh_display()
+
             except Exception as e:
                 self.loading = False
                 self.error_message = f"Connection failed: {str(e)}"
                 print(f"[Discourse Chat] Error: {e}")
-        
+                self.refresh_display()
+
         threading.Thread(target=fetch_worker, daemon=True).start()
     
     def login(self):
@@ -658,6 +683,13 @@ class App(AppBase):
     
     def update(self):
         """Update the app display"""
+        # Fire any held-key repeats
+        if self.input_mode:
+            self.text_input.tick()
+        else:
+            for keycode in self.scroll_repeat.tick():
+                self._do_scroll(keycode)
+
         # Refresh display periodically
         if hasattr(self, 't'):
             self.t += 1
@@ -705,44 +737,26 @@ class App(AppBase):
         # Track if we detected animated content
         self.has_animated_content = False
         
-        # Update loading spinner area if loading
         if self.loading:
             self.has_animated_content = True
-            # Clear only the spinner area (small rectangle in top right)
-            spinner_x = self.width - 12
-            spinner_y = 1
-            spinner_area_width = 12
-            spinner_area_height = 6
-            
-            # Use batching for spinner update
-            self.context["drawing"]["begin_batch"]()
-            
-            # Clear the spinner area with black background
-            self.context["drawing"]["draw_area"](spinner_x, spinner_y, spinner_area_width, spinner_area_height, 0)
-            
-            # Draw the animated spinner
-            spinner_chars = ["|", "/", "-", "\\"]
-            spinner_index = (getattr(self, 't', 0) // 2) % len(spinner_chars)
-            spinner_char = spinner_chars[spinner_index]
-            self.context["drawing"]["draw_text"](f"[{spinner_char}]", spinner_x, spinner_y, font)
-            
-            self.context["drawing"]["end_batch"]()
-        else:
-            # Clear spinner area when not loading (ensures spinner disappears)
-            if hasattr(self, '_was_loading') and self._was_loading:
+            if not self.messages:
+                # Full-screen loading state — redraw everything so the spinner animates
+                self.refresh_display()
+                return
+            else:
+                # Background refresh — patch just the corner spinner
+                spinner_chars = ["|", "/", "-", "\\"]
+                spinner_char = spinner_chars[(getattr(self, 't', 0) // 2) % len(spinner_chars)]
                 spinner_x = self.width - 12
-                spinner_y = 1
-                spinner_area_width = 12
-                spinner_area_height = 6
-                
                 self.context["drawing"]["begin_batch"]()
-                self.context["drawing"]["draw_area"](spinner_x, spinner_y, spinner_area_width, spinner_area_height, 0)
+                self.context["drawing"]["draw_area"](spinner_x, 1, 12, 6, 0)
+                self.context["drawing"]["draw_text"](f"[{spinner_char}]", spinner_x, 1, font)
                 self.context["drawing"]["end_batch"]()
-                
+        else:
+            if hasattr(self, '_was_loading') and self._was_loading:
                 self._was_loading = False
-                self.needs_redraw = True  # Trigger a full refresh to show messages
-        
-        # Track loading state for spinner cleanup
+                self.needs_redraw = True
+
         self._was_loading = self.loading
         
         # Update animated GIFs in messages (if any)
@@ -836,15 +850,6 @@ class App(AppBase):
             # Add gap between messages
             y_pos += line_height
     
-    def refresh_display_smart(self):
-        """Smart refresh that uses selective updates when possible"""
-        if self.has_animated_content:
-            # If we have animated content, do selective updates
-            self.update_animated_areas()
-        else:
-            # Otherwise do a full refresh
-            self.refresh_display()
-    
     def update_input_area(self):
         """Update only the input area for cursor blinking"""
         if self.input_mode:
@@ -889,56 +894,53 @@ class App(AppBase):
         font = self.context["fonts"]["small"]
         line_height = 5
         
-        # Track if we have animated content that needs frequent updates
         self.has_animated_content = False
-        
-        # Draw loading spinner in top right if loading
-        if self.loading:
-            self.has_animated_content = True  # Mark that we have animated content
-            spinner_chars = ["|", "/", "-", "\\"]
-            spinner_index = (getattr(self, 't', 0) // 2) % len(spinner_chars)  # Rotate every 0.1 seconds at 20Hz
-            spinner_char = spinner_chars[spinner_index]
-            spinner_x = self.width - 12  # Position in top right
-            self.context["drawing"]["draw_text"](f"[{spinner_char}]", spinner_x, 1, font)
-        
-        if self.error_message and not self.loading:
-            # Show error message only when not loading
-            lines = self.wrap_text(self.error_message, 28)  # Slightly less than max for error messages
+        spinner_chars = ["|", "/", "-", "\\"]
+        spinner_char = spinner_chars[(getattr(self, 't', 0) // 2) % len(spinner_chars)]
+
+        if self.loading and not self.messages:
+            # Full-screen loading: centered status text + spinner
+            self.has_animated_content = True
+            status = self.error_message or "Connecting..."
+            status_lines = self.wrap_text(status, 28)
+            total_h = (len(status_lines) + 1) * line_height
+            y_pos = (self.height - total_h) // 2
+            for line in status_lines:
+                w, _ = self.context["get_text_size"](line, font)
+                self.context["drawing"]["draw_text"](line, (self.width - w) // 2, y_pos, font)
+                y_pos += line_height
+            spinner_text = f"[{spinner_char}]"
+            w, _ = self.context["get_text_size"](spinner_text, font)
+            self.context["drawing"]["draw_text"](spinner_text, (self.width - w) // 2, y_pos + 2, font)
+
+        elif self.loading and self.messages:
+            # Background refresh — show messages with a small corner spinner
+            self.has_animated_content = True
+            self.context["drawing"]["draw_text"](f"[{spinner_char}]", self.width - 12, 1, font)
+            self.draw_messages()
+
+        elif self.error_message:
+            lines = self.wrap_text(self.error_message, 28)
             y_pos = 12
-            for line in lines[:3]:  # Show max 3 lines of error
+            for line in lines[:3]:
                 self.context["drawing"]["draw_text"](line, 2, y_pos, font)
                 y_pos += line_height
-            
-            # Show configuration instructions if no credentials
             if "configure login" in self.error_message.lower():
                 y_pos += line_height
-                config_lines = [
+                for line in [
                     f"1. Edit {self.discourse_config_path}",
                     "2. Replace 'your_username_here'",
                     "   with your actual username",
                     "3. Add your password and email",
                     "4. Restart this app",
                     "",
-                    "The config file is hidden from git."
-                ]
-                for line in config_lines:
-                    if y_pos < self.height - 25:  # Leave room for status
+                    "The config file is hidden from git.",
+                ]:
+                    if y_pos < self.height - 25:
                         self.context["drawing"]["draw_text"](line, 2, y_pos, font)
                         y_pos += line_height
-            else:
-                # Show note about real implementation
-                y_pos += line_height
-                note_lines = [
-                    "Note: This is a demo interface.",
-                    "Real chat would need Discourse API",
-                    "or proper authentication."
-                ]
-                for line in note_lines:
-                    self.context["drawing"]["draw_text"](line, 2, y_pos, font)
-                    y_pos += line_height
-                
-        elif self.messages or self.loading:
-            # Show messages when we have them OR when loading (to show "Loading messages...")
+
+        elif self.messages:
             self.draw_messages()
         
         # Draw input area
@@ -1132,8 +1134,8 @@ class App(AppBase):
             # Wrap the input buffer text
             wrapped_lines = self.wrap_text(self.input_buffer, content_width)
             
-            # Show up to 3 lines of input text
-            max_input_lines = 3
+            # Show up to 5 lines of input text
+            max_input_lines = 5
             display_lines = wrapped_lines[-max_input_lines:] if len(wrapped_lines) > max_input_lines else wrapped_lines
             
             # Calculate starting Y position (move up if we have multiple lines)
@@ -1142,14 +1144,14 @@ class App(AppBase):
             # Calculate background area dimensions
             bg_width = self.width
             bg_height = (len(display_lines) + 1) * line_height + 4  # Include help text and padding
-            bg_y = start_y - 2  # Start background slightly above text
+            bg_y = start_y  # Start background slightly above text
             
             # Draw white background for input area
             self.context["drawing"]["draw_area"](0, bg_y, bg_width, bg_height, 255)
             
             # Draw the input lines
             for i, line in enumerate(display_lines):
-                y = start_y + i * line_height
+                y = start_y + i * line_height + 1
                 if i == 0:
                     # First line includes the "Say: " prefix
                     display_text = f"{prefix}{line}"
@@ -1163,40 +1165,48 @@ class App(AppBase):
                 
                 self.context["drawing"]["draw_text"](display_text, 2, y, font, 0)  # Black text on white background
             
-            # Add cursor indicator on the last line (blinking vertical line)
-            if len(display_lines) > 0 and self.cursor_visible:
-                last_line_y = start_y + (len(display_lines) - 1) * line_height
+            # Add cursor and autocomplete suggestion on the last line
+            if len(display_lines) > 0:
+                last_line_y = start_y + (len(display_lines) - 1) * line_height + 1
                 last_line = display_lines[-1]
                 cursor_prefix = prefix if len(display_lines) == 1 else " " * len(prefix)
-                
-                # Calculate cursor position using actual text width measurement
-                # The cursor should appear after the prefix and the content of the last line
+
                 cursor_text = cursor_prefix + last_line
                 text_width, _ = self.context["get_text_size"](cursor_text, font)
                 cursor_x = 2 + text_width
-                
-                if cursor_x < self.width - 2:  # Make sure cursor fits on screen
-                    # Draw cursor as a black vertical line on overlay layer (not base layer)
-                    self.context["drawing"]["draw_overlay_area"](cursor_x, last_line_y, 1, line_height - 1, 0)
+
+                # Draw autocomplete suggestion inverted (black bg, white text) so it
+                # stands out against the white input area, same spacing as proxi
+                suggestion = self.text_input.suggestion
+                if suggestion:
+                    sug_width, sug_height = self.context["get_text_size"](suggestion, font)
+                    if cursor_x + sug_width + 2 < self.width - 2:
+                        self.context["drawing"]["draw_area"](cursor_x, last_line_y - 1, sug_width + 2, sug_height + 2, 0)
+                        self.context["drawing"]["draw_text"](suggestion, cursor_x + 1, last_line_y, font, 255)
+
+                if self.cursor_visible and cursor_x < self.width - 2:
+                    self.context["drawing"]["draw_overlay_area"](cursor_x, last_line_y - 1, 1, 6, 255)
             
-            # Show character count and help text below input area (calculate properly)
+            # Show character count and help text, right-aligned
             char_count = len(self.input_buffer)
-            help_y = start_y + len(display_lines) * line_height  # Position help text after all input lines
+            help_y = start_y + len(display_lines) * line_height + 2
             help_text = f"({char_count}/200) Enter=Send ESC=Cancel"
-            if len(help_text) > max_input_width:
+            help_w, _ = self.context["get_text_size"](help_text, font)
+            if help_w > self.width - 4:
                 help_text = f"({char_count}/200) Enter/ESC"
-            self.context["drawing"]["draw_text"](help_text, 2, help_y, font, 0)  # Black text on white background
-            
+                help_w, _ = self.context["get_text_size"](help_text, font)
+            help_x = self.width - help_w - 2
+            self.context["drawing"]["draw_text"](help_text, help_x, help_y, font, 0)
         else:
             # Show help with white background
             help_text = "Press I to type a message"
             bg_width = len(help_text) * 4 + 4  # Calculate width based on character width (4px per char) + padding
-            bg_height = line_height + 2  # Height for one line plus padding
-            status_y = self.height - 7
+            bg_height = line_height + 1  # Height for one line plus padding
+            status_y = self.height - 5
             
             # Draw white background area
-            self.context["drawing"]["draw_area"](0, input_y - 1, self.width, bg_height * 2, 255)  # White background
-            self.context["drawing"]["draw_text"](help_text, 2, input_y, font, 0)  # Black text on white background
+            self.context["drawing"]["draw_area"](0, input_y, self.width, bg_height * 2, 255)  # White background
+            self.context["drawing"]["draw_text"](help_text, 2, input_y + 1, font, 0)  # Black text on white background
             
             # Draw status line
             if self.input_mode:
@@ -1204,9 +1214,9 @@ class App(AppBase):
             elif not self.credentials["username"] or self.credentials["username"] == "your_username_here":
                 status = "C:Config R:Refresh ESC:Quit"
             elif self.logged_in:
-                status = f"{self.credentials['username'][:4]} UP/DN:Scroll I:Input ESC:Quit"
+                status = f"{self.credentials['username'][:4]} - I:Input ESC:Quit"
             else:
-                status = f"{self.credentials['username'][:4]} [ERROR] ESC:Quit"
+                status = f"{self.credentials['username'][:4]} - [LOGIN ERROR] ESC:Quit"
             self.context["drawing"]["draw_text"](status, 2, status_y, font, 0)
     
     def wrap_text(self, text, width):
@@ -1290,82 +1300,80 @@ class App(AppBase):
         self.error_message = f"Config file: {config_path}"
         print(f"[Discourse Chat] Config file location: {config_path}")
     
-    def onkeyup(self, keycode):
+    def onkeydown(self, keycode):
         """Handle keyboard input"""
         if self.input_mode:
             self.handle_input_mode(keycode)
         else:
             self.handle_browser_mode(keycode)
+
+    def onkeyup(self, keycode):
+        """Release held keys for repeat tracking"""
+        self.text_input.key_up(keycode)
+        self.scroll_repeat.release(keycode)
     
     def handle_input_mode(self, keycode):
         """Handle keyboard input in input mode"""
-        if keycode == "KEY_ESC":
-            self.input_mode = False
-            self.input_buffer = ""
-            self.needs_redraw = True
-            
-        elif keycode == "KEY_ENTER":
-            if self.input_buffer.strip():
-                # Send the message to the real chat
-                if self.logged_in:
-                    self.send_message(self.input_buffer.strip())
-                else:
-                    # Add as local message if not logged in
-                    new_message = {
-                        "username": "You (local)",
-                        "content": self.input_buffer.strip(),
-                        "time": datetime.datetime.now().strftime("%H:%M")
-                    }
-                    self.messages.append(new_message)
-                    # Auto-scroll to show the new message
-                    self.scroll_to_bottom()
-                
-            self.input_mode = False
-            self.input_buffer = ""
-            self.needs_redraw = True
-            
-        elif keycode == "KEY_BACKSPACE":
-            if self.input_buffer:
-                self.input_buffer = self.input_buffer[:-1]
-                # Reset cursor blinking when typing
-                self.cursor_visible = True
-                self.cursor_blink_timer = 0
-                self.needs_redraw = True
-        
-        else:
-            # Handle character input
-            char = self.keycode_to_char(keycode)
-            if char and len(self.input_buffer) < 200:  # Increased limit for multi-line input
-                self.input_buffer += char
-                # Reset cursor blinking when typing
-                self.cursor_visible = True
-                self.cursor_blink_timer = 0
-                self.needs_redraw = True
+        self.text_input.key_down(keycode)
+
+    def _on_input_change(self, buffer, suggestion):
+        self.input_buffer = buffer
+        self.cursor_visible = True
+        self.cursor_blink_timer = 0
+        self.refresh_display()
+
+    def _on_input_submit(self, text):
+        self.input_buffer = ""
+        self.input_mode = False
+        if text:
+            if self.logged_in:
+                self.send_message(text)
+            else:
+                self.messages.append({
+                    "username": "You (local)",
+                    "content": text,
+                    "time": datetime.datetime.now().strftime("%H:%M")
+                })
+                self.scroll_to_bottom()
+        self.refresh_display()
+
+    def _on_input_cancel(self):
+        self.input_buffer = ""
+        self.input_mode = False
+        self.refresh_display()
     
+    def _do_scroll(self, keycode):
+        if keycode in ("KEY_UP", "KEY_W"):
+            max_scroll = max(0, len(self.messages) - 1)
+            if self.scroll_offset < max_scroll:
+                self.scroll_offset += 1
+                self.refresh_display()
+        elif keycode in ("KEY_DOWN", "KEY_S"):
+            if self.scroll_offset > 0:
+                self.scroll_offset -= 1
+                self.refresh_display()
+
     def handle_browser_mode(self, keycode):
         """Handle keyboard input in browser mode"""
             
         if keycode == "KEY_UP" or (keycode == "KEY_W" and not self.input_mode):
-            # Increase scroll_offset to go back in time (show older messages)
-            max_scroll = max(0, len(self.messages) - 1)  # Can scroll back to the very first message
-            if self.scroll_offset < max_scroll:
-                self.scroll_offset += 1
-                self.needs_redraw = True
-                
+            self.scroll_repeat.press(keycode)
+            self._do_scroll(keycode)
+
         elif keycode == "KEY_DOWN" or (keycode == "KEY_S" and not self.input_mode):
-            # Decrease scroll_offset to go forward in time (show newer messages)
-            if self.scroll_offset > 0:
-                self.scroll_offset -= 1
-                self.needs_redraw = True
+            self.scroll_repeat.press(keycode)
+            self._do_scroll(keycode)
                 
         elif keycode == "KEY_I":
             if self.credentials["username"] and self.credentials["username"] != "your_username_here":
                 self.input_mode = True
                 self.input_buffer = ""
+                self.text_input.clear()
+                self.scroll_repeat.release_all()
                 # Reset cursor blinking state
                 self.cursor_visible = True
                 self.cursor_blink_timer = 0
-                self.needs_redraw = True
+                self.refresh_display()
             
         elif keycode == "KEY_R" and not self.input_mode:
             self.fetch_messages_async()
@@ -1378,25 +1386,6 @@ class App(AppBase):
             
         elif (keycode == "KEY_Q" and not self.input_mode) or keycode == "KEY_ESC":
             self.return_to_launcher()
-    
-    def keycode_to_char(self, keycode):
-        """Convert keycode to character"""
-        key_map = {
-            "KEY_SPACE": " ",
-            "KEY_A": "a", "KEY_B": "b", "KEY_C": "c", "KEY_D": "d", "KEY_E": "e",
-            "KEY_F": "f", "KEY_G": "g", "KEY_H": "h", "KEY_I": "i", "KEY_J": "j",
-            "KEY_K": "k", "KEY_L": "l", "KEY_M": "m", "KEY_N": "n", "KEY_O": "o",
-            "KEY_P": "p", "KEY_Q": "q", "KEY_R": "r", "KEY_S": "s", "KEY_T": "t",
-            "KEY_U": "u", "KEY_V": "v", "KEY_W": "w", "KEY_X": "x", "KEY_Y": "y",
-            "KEY_Z": "z",
-            "KEY_0": "0", "KEY_1": "1", "KEY_2": "2", "KEY_3": "3", "KEY_4": "4",
-            "KEY_5": "5", "KEY_6": "6", "KEY_7": "7", "KEY_8": "8", "KEY_9": "9",
-            "KEY_SEMICOLON": ";", "KEY_APOSTROPHE": "'", "KEY_COMMA": ",",
-            "KEY_PERIOD": ".", "KEY_SLASH": "/", "KEY_BACKSLASH": "\\",
-            "KEY_LEFTBRACE": "[", "KEY_RIGHTBRACE": "]", "KEY_MINUS": "-",
-            "KEY_EQUAL": "=", "KEY_GRAVE": "`"
-        }
-        return key_map.get(keycode, "")
     
     def return_to_launcher(self):
         """Return to the launcher app"""

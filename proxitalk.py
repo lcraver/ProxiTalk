@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import hashlib
 import threading
@@ -454,9 +455,9 @@ _batch_mode = False
 _batch_operations = []
 
 def begin_batch():
-    """No-op: the display thread now drains and coalesces all queued
-    drawing commands into a single hardware update automatically, so
-    apps no longer need to bracket draws with begin_batch/end_batch."""
+    """No-op: the display thread only flushes to hardware when the queue
+    is fully drained, so partial frames are never sent regardless of
+    whether apps bracket their draws with begin_batch/end_batch."""
     pass
 
 def end_batch():
@@ -731,7 +732,7 @@ def display_thread_func():
 
     try:
         while True:
-            timeout = 0.1
+            timeout = 0.016
 
             try:
                 cmd = display_queue.get(timeout=timeout)
@@ -820,9 +821,9 @@ def display_thread_func():
                         _, x, y, width, height = cmd
                         update_display(region=(x, y, width, height))
                     case "begin_batch":
-                        begin_batch()
+                        pass
                     case "end_batch":
-                        end_batch()
+                        pass
                     case "exit":
                         print("[Display Thread] Exiting on exit command", flush=True)
                         should_exit = True
@@ -841,7 +842,7 @@ def display_thread_func():
             elif cursor_state_changed:
                 # Handle cursor state changes immediately
                 display_draw_blinking_cursor(lastDrawX, lastDrawY, False)
-            
+
             global _latest_full_frame
             if _latest_full_frame is not None:
                 with _full_frame_lock:
@@ -851,7 +852,11 @@ def display_thread_func():
                         base_layer.paste(frame)
                     mark_display_dirty(0, 0, width, height)
 
-            update_display()
+            # Only flush to hardware once the queue is fully drained.
+            # If more commands are already waiting, loop back and process
+            # them first so the hardware never sees a partial frame.
+            if display_queue.empty():
+                update_display()
             last_display_update = now
 
     except Exception as e:
@@ -1376,6 +1381,14 @@ def main():
 
     # Update context to include app_manager for other apps to use
     context["app_manager"] = app_manager
+
+    # Dev mode: watch source files and hot-reload apps / restart on core changes.
+    if "--dev" in sys.argv:
+        from dev_watcher import DevWatcher
+        _root = os.path.dirname(os.path.abspath(__file__))
+        dev_watcher = DevWatcher(_root, APPS_DIR, app_manager)
+        dev_watcher.start()
+        atexit.register(dev_watcher.stop)
 
     sleep_controller = SleepController(
         display=disp,

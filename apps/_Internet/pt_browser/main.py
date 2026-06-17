@@ -471,12 +471,7 @@ class App(AppBase):
         self.url = "http://frogfind.com"
         self.url_history = []  # Stack to track visited URLs for back navigation
         self.shared_image_cache = {}  # Shared cache across all renderer instances
-        self.html = self.fetch_page(self.url)
-        self.renderer = SimpleHTMLRenderer(self.html)
-        self.renderer.base_url = self.url  # Set base URL for relative image URLs
-        self.renderer.image_cache = self.shared_image_cache  # Share the cache
-        # Set up callback for image loading completion
-        self.renderer.image_load_callback = self.on_image_loaded
+        self.renderer = None
         self.drawing = context["drawing"]  # Use new region-based drawing system
         self.font = context["fonts"]["small"]
         self.screen_width = context["screen_width"]
@@ -488,12 +483,16 @@ class App(AppBase):
         self._scroll_repeat_interval = 0.07  # Repeat rate (seconds)
         self._scrolling_direction = None
 
+        # Loading state
+        self.loading = False
+        self.loading_url = ""
+        self.loading_status = ""
+        self._spinner_tick = 0
+
     def on_image_loaded(self):
         """Callback called when an image finishes loading"""
-        print("[FrogFind] Image loaded callback - triggering redraw")
-        print(f"[FrogFind] Current image cache size: {len(self.renderer.image_cache)}")
-        # Force regeneration of display lines by clearing the cache
-        self.renderer.cached_display_lines = None
+        if self.renderer:
+            self.renderer.cached_display_lines = None
         self.draw()
 
     def fetch_page(self, url):
@@ -507,8 +506,6 @@ class App(AppBase):
             return f"<h1>Error</h1><p>{e}</p>"
 
     def save_html(self, url, html_text):
-        pass
-        # Save raw HTML to visited_pages/<hash>.html
         save_dir = os.path.join(os.path.dirname(__file__), "visited_pages")
         os.makedirs(save_dir, exist_ok=True)
         url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()
@@ -516,40 +513,87 @@ class App(AppBase):
         try:
             with open(filename, "w", encoding="utf-8") as f:
                 f.write(html_text)
-        except Exception as e:
-            pass  # Ignore errors silently
+        except Exception:
+            pass
 
-    def navigate_to_url(self, new_url, add_to_history=True):
-        """Navigate to a new URL, optionally adding current URL to history"""
-        if add_to_history and self.url != new_url:
-            self.url_history.append(self.url)
-        
-        self.url = new_url
-        self.html = self.fetch_page(self.url)
-        self.renderer = SimpleHTMLRenderer(self.html)
-        self.renderer.base_url = self.url  # Set base URL for relative image URLs
-        self.renderer.image_cache = self.shared_image_cache  # Share the cache
-        # Set up callback for image loading completion
-        self.renderer.image_load_callback = self.on_image_loaded
+    def _finish_navigation(self, url, html_text):
+        """Called from fetch thread once HTML is ready."""
+        self.url = url
+        renderer = SimpleHTMLRenderer(html_text)
+        renderer.base_url = url
+        renderer.image_cache = self.shared_image_cache
+        renderer.image_load_callback = self.on_image_loaded
+        self.renderer = renderer
+        self.loading = False
+        self.loading_status = ""
         self.draw()
 
+    def navigate_to_url(self, new_url, add_to_history=True):
+        """Start async navigation to a new URL."""
+        if add_to_history and self.url != new_url:
+            self.url_history.append(self.url)
+
+        self.loading = True
+        self.loading_url = new_url
+        self.loading_status = "Connecting..."
+        self.draw()
+
+        def fetch_worker():
+            self.loading_status = "Loading page..."
+            html_text = self.fetch_page(new_url)
+            self._finish_navigation(new_url, html_text)
+
+        threading.Thread(target=fetch_worker, daemon=True).start()
+
+    def submit_form(self, method, action, data):
+        """Start async form submission."""
+        self.url_history.append(self.url)
+        self.loading = True
+        self.loading_url = action
+        self.loading_status = "Submitting..."
+        self.draw()
+
+        def fetch_worker():
+            self.loading_status = "Loading page..."
+            try:
+                if method == 'post':
+                    resp = requests.post(action, data=data, timeout=10)
+                else:
+                    resp = requests.get(action, params=data, timeout=10)
+                resp.raise_for_status()
+                html_text = resp.text
+                self.save_html(action, html_text)
+            except Exception as e:
+                html_text = f"<h1>Error</h1><p>{e}</p>"
+            self._finish_navigation(action, html_text)
+
+        threading.Thread(target=fetch_worker, daemon=True).start()
+
     def go_back(self):
-        """Navigate back to the previous URL if available"""
+        """Navigate back to the previous URL if available."""
         if self.url_history:
-            previous_url = self.url_history.pop()
-            self.navigate_to_url(previous_url, add_to_history=False)
+            self.navigate_to_url(self.url_history.pop(), add_to_history=False)
             return True
         return False
 
     def start(self):
-        self.draw()
+        self.navigate_to_url(self.url, add_to_history=False)
 
     def update(self):
+        # Animate spinner while loading
+        if self.loading:
+            self._spinner_tick += 1
+            if self._spinner_tick % 2 == 0:
+                self.draw()
+            return
+
+        if not self.renderer:
+            return
+
         # Check if any images have finished loading
         current_cache_size = len([v for v in self.renderer.image_cache.values() if v.get('image') is not None])
         if current_cache_size != self.last_image_cache_size:
             self.last_image_cache_size = current_cache_size
-            # Clear cached display lines to force regeneration with updated image heights
             self.renderer.cached_display_lines = None
             self.draw()
         # Continuous scroll logic
@@ -610,154 +654,76 @@ class App(AppBase):
                         self.draw()
 
     def onkeydown(self, keycode):
-        # Use ProxiTalk key names (e.g., "KEY_SHIFT", "KEY_RETURN", "KEY_ESC")
+        if self.loading:
+            return  # Ignore input while loading
+
         if keycode in ("KEY_ESC", "KEY_ESCAPE"):
             self.context["app_manager"].swap_app_async("frogfind_web", "launcher", update_rate_hz=20.0, delay=0.1)
-        elif keycode == "KEY_BACKSPACE":
-            # If we're not in an input field, go back in history
-            selected = self.renderer.get_selected()
-            if not (selected and selected.tag == 'input'):
-                if not self.go_back():
-                    # No history available, show a message or do nothing
-                    pass
-            else:
-                # We're in an input field, handle text deletion
-                sel = selected
-                self.renderer.input_buffers[id(sel)] = self.renderer.input_buffers.get(id(sel), '')[:-1]
+            return
+
+        if not self.renderer:
+            return
+
+        selected = self.renderer.get_selected()
+
+        if keycode == "KEY_BACKSPACE":
+            if selected and selected.tag == 'input':
+                self.renderer.input_buffers[id(selected)] = self.renderer.input_buffers.get(id(selected), '')[:-1]
                 self.draw()
-        elif keycode == "KEY_LEFTALT" or keycode == "KEY_RIGHTALT":
+            else:
+                self.go_back()
+
+        elif keycode in ("KEY_LEFTALT", "KEY_RIGHTALT"):
             self.renderer.next_interactive()
             self.draw()
+
         elif keycode == "KEY_UP":
-            # Scroll up by lines
             self.renderer.scroll_offset = max(0, self.renderer.scroll_offset - 1)
             self.draw()
+
         elif keycode == "KEY_DOWN":
-            # Scroll down by lines - calculate proper bounds
-            if hasattr(self.renderer, 'cached_display_lines') and self.renderer.cached_display_lines:
-                # Calculate total content height
-                total_height = 0
-                for line in self.renderer.cached_display_lines:
-                    line_height_actual = line[3] if len(line) > 3 else 6
-                    total_height += line_height_actual
-                
-                # Calculate maximum scroll in steps (6px per step) + allow one extra line
-                max_scroll_pixels = max(0, total_height - self.screen_height + 6)  # +6px for extra line
-                max_scroll_steps = max_scroll_pixels // 6
-                
-                # Only scroll if we haven't reached the bottom
+            if self.renderer.cached_display_lines:
+                total_height = sum(l[3] if len(l) > 3 else 6 for l in self.renderer.cached_display_lines)
+                max_scroll_steps = max(0, total_height - self.screen_height + 6) // 6
                 if self.renderer.scroll_offset < max_scroll_steps:
                     self.renderer.scroll_offset += 1
                     self.draw()
-        elif keycode == "KEY_ENTER" or keycode == "KEY_RETURN":
-            selected = self.renderer.get_selected()
-            if selected:
-                if selected.tag == 'a':
-                    href = selected.attrs.get('href')
-                    if href:
-                        if not href.startswith('http'):
-                            href = self.url.rstrip('/') + '/' + href.lstrip('/')
-                        self.navigate_to_url(href)
-                elif selected.tag == 'input':
-                    # For demo: if input type is url/text, navigate to it
-                    buf = self.renderer.input_buffers.get(id(selected), '').strip()
-                    if buf:
-                        if buf.startswith('http'):
-                            new_url = buf
-                        else:
-                            new_url = 'http://' + buf
-                        self.navigate_to_url(new_url)
-                elif selected.tag == 'submit':
-                    # Find the form for this submit button
-                    form_idx = getattr(selected, 'form_idx', None)
-                    if form_idx is not None and hasattr(self.renderer, 'forms'):
-                        form = self.renderer.forms[form_idx]
-                        # Collect input values for this form
-                        data = {}
-                        for el in form['inputs']:
-                            if el.tag == 'input':
-                                name = el.attrs.get('name', 'input')
-                                value = self.renderer.input_buffers.get(id(el), el.attrs.get('value', ''))
-                                data[name] = value
-                        # Determine method and action
-                        method = form['attrs'].get('method', 'get').lower()
-                        action = form['attrs'].get('action', self.url)
-                        print(f"DEBUG: Form submission - Action: {action}, Method: {method}, Data: {data}")
-                        if not action.startswith('http'):
-                            if action.startswith('/'):
-                                # Absolute path - use domain from current URL
-                                from urllib.parse import urlparse
-                                parsed = urlparse(self.url)
-                                action = f"{parsed.scheme}://{parsed.netloc}{action}"
-                            else:
-                                # Relative path
-                                action = self.url.rstrip('/') + '/' + action.lstrip('/')
-                        if method == 'post':
-                            try:
-                                resp = requests.post(action, data=data, timeout=10)
-                                resp.raise_for_status()
-                                html_text = resp.text
-                                self.save_html(action, html_text)
-                                # Add current URL to history before navigating
-                                self.url_history.append(self.url)
-                                self.url = action
-                                self.html = html_text
-                                self.renderer = SimpleHTMLRenderer(self.html)
-                                self.renderer.base_url = self.url
-                                self.renderer.image_cache = self.shared_image_cache  # Share the cache
-                                # Set up callback for image loading completion
-                                self.renderer.image_load_callback = self.on_image_loaded
-                                self.draw()
-                            except Exception as e:
-                                self.html = f"<h1>Error</h1><p>{e}</p>"
-                                self.renderer = SimpleHTMLRenderer(self.html)
-                                self.renderer.base_url = self.url
-                                self.renderer.image_cache = self.shared_image_cache  # Share the cache
-                                # Set up callback for image loading completion
-                                self.renderer.image_load_callback = self.on_image_loaded
-                                self.draw()
-                        else:
-                            # GET method
-                            try:
-                                resp = requests.get(action, params=data, timeout=10)
-                                resp.raise_for_status()
-                                html_text = resp.text
-                                self.save_html(action, html_text)
-                                # Add current URL to history before navigating
-                                self.url_history.append(self.url)
-                                self.url = action
-                                self.html = html_text
-                                self.renderer = SimpleHTMLRenderer(self.html)
-                                self.renderer.base_url = self.url
-                                self.renderer.image_cache = self.shared_image_cache  # Share the cache
-                                # Set up callback for image loading completion
-                                self.renderer.image_load_callback = self.on_image_loaded
-                                self.draw()
-                            except Exception as e:
-                                self.html = f"<h1>Error</h1><p>{e}</p>"
-                                self.renderer = SimpleHTMLRenderer(self.html)
-                                self.renderer.base_url = self.url
-                                self.renderer.image_cache = self.shared_image_cache  # Share the cache
-                                # Set up callback for image loading completion
-                                self.renderer.image_load_callback = self.on_image_loaded
-                                self.draw()
-                    else:
-                        # No form, just reload
-                        self.html = self.fetch_page(self.url)
-                        self.renderer = SimpleHTMLRenderer(self.html)
-                        self.renderer.base_url = self.url
-                        self.renderer.image_cache = self.shared_image_cache  # Share the cache
-                        # Set up callback for image loading completion
-                        self.renderer.image_load_callback = self.on_image_loaded
-                        self.draw()
-        elif self.renderer.get_selected() and self.renderer.get_selected().tag == 'input':
-            sel = self.renderer.get_selected()
-            # Handle regular character input for input fields
-            
-            print("Key pressed:", keycode)
+
+        elif keycode in ("KEY_ENTER", "KEY_RETURN"):
+            if not selected:
+                return
+            if selected.tag == 'a':
+                href = selected.attrs.get('href', '')
+                if href:
+                    if not href.startswith('http'):
+                        href = self.url.rstrip('/') + '/' + href.lstrip('/')
+                    self.navigate_to_url(href)
+            elif selected.tag == 'input':
+                buf = self.renderer.input_buffers.get(id(selected), '').strip()
+                if buf:
+                    self.navigate_to_url(buf if buf.startswith('http') else 'http://' + buf)
+            elif selected.tag == 'submit':
+                form_idx = getattr(selected, 'form_idx', None)
+                if form_idx is not None and hasattr(self.renderer, 'forms'):
+                    form = self.renderer.forms[form_idx]
+                    data = {
+                        el.attrs.get('name', 'input'): self.renderer.input_buffers.get(id(el), el.attrs.get('value', ''))
+                        for el in form['inputs'] if el.tag == 'input'
+                    }
+                    method = form['attrs'].get('method', 'get').lower()
+                    action = form['attrs'].get('action', self.url)
+                    if not action.startswith('http'):
+                        from urllib.parse import urlparse
+                        parsed = urlparse(self.url)
+                        action = f"{parsed.scheme}://{parsed.netloc}{action}" if action.startswith('/') else self.url.rstrip('/') + '/' + action.lstrip('/')
+                    self.submit_form(method, action, data)
+                else:
+                    self.navigate_to_url(self.url, add_to_history=False)
+
+        elif selected and selected.tag == 'input':
             char = key_map.get(keycode, "")
-            if char:  # Only add if we got a valid character
-                self.renderer.input_buffers[id(sel)] = self.renderer.input_buffers.get(id(sel), '') + char
+            if char:
+                self.renderer.input_buffers[id(selected)] = self.renderer.input_buffers.get(id(selected), '') + char
                 self.draw()
 
     def stop(self):
@@ -840,11 +806,45 @@ class App(AppBase):
         
         return lines if lines else [""]
 
+    def _draw_loading(self):
+        """Draw centered loading screen with animated spinner."""
+        font = self.font
+        line_height = 6
+        spinner_chars = ["|", "/", "-", "\\"]
+        spinner_char = spinner_chars[(self._spinner_tick // 2) % len(spinner_chars)]
+
+        # Truncate URL to fit screen
+        url_display = self.loading_url
+        max_chars = (self.screen_width - 4) // 4
+        if len(url_display) > max_chars:
+            url_display = url_display[:max_chars - 3] + "..."
+
+        lines = [self.loading_status, url_display]
+        total_h = (len(lines) + 1) * line_height
+        y = (self.screen_height - total_h) // 2
+
+        for line in lines:
+            if line:
+                w = self.context["get_text_size"](line, font)[0]
+                self.drawing["draw_text"](line, (self.screen_width - w) // 2, y, font)
+            y += line_height
+
+        spinner_text = f"[{spinner_char}]"
+        w = self.context["get_text_size"](spinner_text, font)[0]
+        self.drawing["draw_text"](spinner_text, (self.screen_width - w) // 2, y + 2, font)
+
     def draw(self):
-        print(f"[FrogFind] draw() called - image cache has {len(self.renderer.image_cache)} items")
         self.drawing["begin_batch"]()
         try:
             self.drawing["clear_screen"]()
+
+            if self.loading:
+                self._draw_loading()
+                return
+
+            if not self.renderer:
+                return
+
             line_height = 6
             
             # Use actual screen width for wrapping, leaving small margin and left padding

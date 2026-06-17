@@ -62,7 +62,7 @@ class App(AppBase):
         ]
         self.FOV = math.pi / 3
         self.HALF_FOV = self.FOV / 2
-        self.NUM_RAYS = 60
+        self.NUM_RAYS = 64
         self.MAX_DEPTH = 100
         self.DELTA_ANGLE = self.FOV / self.NUM_RAYS
         self.DIST = self.NUM_RAYS / (2 * math.tan(self.HALF_FOV))
@@ -72,6 +72,7 @@ class App(AppBase):
         self.player_angle = 0
         self.bg_color = 255
         self.needs_redraw = True
+        self.show_minimap = False
         self.held_keys = context["pressed_keys"]
 
         # Multiple sprite positions: placed via {0}, {1}, ... in the MAP
@@ -100,7 +101,45 @@ class App(AppBase):
     def mapping(self, a, b):
         return int(a // self.TILE), int(b // self.TILE)
 
+    def draw_floor(self, draw, player_pos, player_angle):
+        """Perspective-correct checkered floor using floor casting."""
+        half_h = self.height // 2
+        dir_x = math.cos(player_angle)
+        dir_y = math.sin(player_angle)
+        plane_len = math.tan(self.HALF_FOV)
+        plane_x = -dir_y * plane_len
+        plane_y =  dir_x * plane_len
+        # posZ must match the wall projection constant so tiles align with walls:
+        # wall bottom at row y satisfies y - half_h = PROJ_COEFF / (2 * depth),
+        # so floor row y is at depth = PROJ_COEFF / (2 * (y - half_h)).
+        posZ = self.PROJ_COEFF / 2  # == DIST * TILE
+
+        points = []
+        for y in range(half_h + 1, self.height):
+            row_dist = posZ / (y - half_h)
+            fog = min(1.0, max(0.0, row_dist / self.MAX_DEPTH))
+            step_x = row_dist * 2 * plane_x / self.width
+            step_y = row_dist * 2 * plane_y / self.width
+            fx = player_pos[0] + row_dist * (dir_x - plane_x)
+            fy = player_pos[1] + row_dist * (dir_y - plane_y)
+            by = y % 4
+            for x in range(self.width):
+                if (int(fx // self.TILE) + int(fy // self.TILE)) % 2 == 0:
+                    if fog < 0.5:
+                        # Close floor: solid, same as the wall raycaster's large-slice path
+                        points.append((x, y))
+                    else:
+                        # Far floor: Bayer dithering fades it out toward the horizon
+                        if fog < self.BAYER_4x4[by][x % 4] / 16.0:
+                            points.append((x, y))
+                fx += step_x
+                fy += step_y
+        if points:
+            draw.point(points, fill=1)
+
     def ray_casting(self, draw, player_pos, player_angle):
+        # --- 0. Draw checkered floor (walls will overwrite) ---
+        self.draw_floor(draw, player_pos, player_angle)
         # --- 1. Raycast walls, store wall depths for sprite occlusion ---
         cur_angle = player_angle - self.HALF_FOV
         wall_depths = [self.MAX_DEPTH] * self.NUM_RAYS
@@ -292,16 +331,15 @@ class App(AppBase):
             self.needs_redraw = False
 
     def draw_frame(self):
-        self.draw["begin_batch"]()
-        try:
-            self.draw["clear_screen"]()
-            img = Image.new("1", (self.width, self.height), 0)
-            draw = ImageDraw.Draw(img)
-            self.ray_casting(draw, self.player_pos, self.player_angle)
+        img = Image.new("1", (self.width, self.height), 0)
+        draw = ImageDraw.Draw(img)
+        self.ray_casting(draw, self.player_pos, self.player_angle)
+        if self.show_minimap:
             self.draw_minimap(draw)
-            self.draw["draw_image"](img, 0, 0)
-        finally:
-            self.draw["end_batch"]()
+        # Compute done — queue both commands atomically so the OS-level
+        # batching gate (display_queue.empty) never sees a torn frame.
+        self.draw["clear_screen"]()
+        self.draw["draw_image"](img, 0, 0)
 
     def draw_minimap(self, draw):
         map_rows = len(self.MAP)

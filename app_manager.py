@@ -413,11 +413,14 @@ class AppManager:
             print(f"[AppManager] Clearing active app: {from_app}")
             self.active_app = None
 
-        # Ensure cursor is completely cleared between apps
+        # Clear all display layers between apps so no previous app's
+        # content leaks through into the next app's rendering.
         self.clear_cursor()
-        # Also clear the cursor layer completely
         if "display_queue" in self.context:
-            self.context["display_queue"].put(("clear_base_2",))
+            q = self.context["display_queue"]
+            q.put(("clear_base",))
+            q.put(("clear_base_2",))
+            q.put(("clear_overlay_area", 0, 0, 128, 64))
 
         # Unload the source app
         if from_app in self.loaded_apps:

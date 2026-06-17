@@ -232,7 +232,7 @@ class EmulatedDisplay:
                             self.screen.blit(overlay, (region["x"] * self.scale, region["y"] * self.scale))
                     pygame.display.flip()
 
-                clock.tick(12)
+                clock.tick(60)
 
         except Exception as exc:
             print(f"[Error] Critical error in pygame main loop: {exc}")

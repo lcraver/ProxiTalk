@@ -232,7 +232,7 @@ class App(AppBase):
             self.drawAllApps()
             self.needs_redraw = False
     
-    def onkeyup(self, keycode):
+    def onkeydown(self, keycode):
         if keycode == "KEY_LEFT" or keycode == "KEY_A":
             if self.app_count == 0:
                 return

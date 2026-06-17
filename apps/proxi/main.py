@@ -1,12 +1,12 @@
 from unicodedata import name
 from interfaces import AppBase
-import bisect
 import os
 import threading
 import time
 import queue
 from config.keymap import key_map, shift_key_map
 from utils.japanese import detect_and_convert_romanji
+from utils.text_input import TextInput
 
 class App(AppBase):
     def __init__(self, context):
@@ -15,22 +15,16 @@ class App(AppBase):
         self.current_engine = context["tts"]["get_engine"]
         self.context = context
         
-        # Load both English and Japanese autocomplete words
-        self.words = self.load_autocomplete_words(context["AUTOCOMPLETE_PATH"])
-        self.autocomplete_words = self.load_autocomplete_words(context["AUTOCOMPLETE_PATH"])
-        self.autocomplete_words.sort()
-        
-        # Load Japanese autocomplete words
         japanese_path = context["AUTOCOMPLETE_PATH"].replace("autocomplete_words.txt", "autocomplete_words_japanese.txt")
-        self.japanese_autocomplete_words = self.load_autocomplete_words(japanese_path)
-        self.japanese_autocomplete_words.sort()
-        
-        print(f"[Proxi] Loaded {len(self.autocomplete_words)} English autocomplete words")
-        print(f"[Proxi] Loaded {len(self.japanese_autocomplete_words)} Japanese autocomplete words")
-        
+        self.text_input = TextInput.with_autocomplete(
+            english_path=context["AUTOCOMPLETE_PATH"],
+            japanese_path=japanese_path,
+        )
+        self.text_input.on_change = self._on_input_change
+
         self.currentline = ""
         self.current_suggestion = ""
-        
+
         # Japanese romanji preview state
         self.romanji_preview = None
         self.is_japanese_detected = False
@@ -59,17 +53,12 @@ class App(AppBase):
         print("[Proxi] - Region-based drawing for minimal display transfers")
         print("[Proxi] - Batching enabled for smooth updates on real hardware")
         
-    def load_autocomplete_words(self, filepath):
-        words = []
-        try:
-            with open(filepath, "r", encoding="utf-8") as f:
-                for line in f:
-                    word = line.strip()
-                    if word:
-                        words.append(word)
-        except Exception as e:
-            print(f"Failed to load autocomplete words from {filepath}: {e}", flush=True)
-        return words
+    def _on_input_change(self, buffer, suggestion):
+        self.currentline = buffer
+        self.current_suggestion = suggestion
+        self._in_input_mode = True
+        self.update_romanji_preview()
+        self.draw_interface("Input", "")
 
     def parse_text_segments(self, text):
         """Parse text to identify highlighted segments in [brackets]"""
@@ -265,10 +254,10 @@ class App(AppBase):
                         # Restore the text to allow retry
                         self.currentline = text
                         self._in_input_mode = True
-                        
-                        # Update display to show the restored text
-                        self.current_suggestion = self.get_autocomplete_suggestion(self.currentline)
-                        
+                        self.text_input._buffer = text
+                        self.text_input._update_suggestion()
+                        self.current_suggestion = self.text_input.suggestion
+
                         # Force a UI update to show the restored text immediately
                         self.update_input_display()
                         
@@ -315,28 +304,6 @@ class App(AppBase):
             self.tts_queue.put(text.strip())
             self.start_tts_worker()
             print(f"[Proxi] TTS request queued: {text} (Queue size: {self.tts_queue.qsize()})")
-
-    def get_autocomplete_suggestion(self, current_text):
-        if not current_text or current_text.endswith(' '):
-            return ""
-        last_word = current_text.split(' ')[-1].lower()
-        if not last_word:  # Extra safety check
-            return ""
-        
-        # Choose the appropriate word list based on Japanese detection
-        if self.is_japanese_detected:
-            word_list = self.japanese_autocomplete_words
-        else:
-            word_list = self.autocomplete_words
-        
-        i = bisect.bisect_left(word_list, last_word)
-        while i < len(word_list) and word_list[i].startswith(last_word):
-            candidate = word_list[i]
-            suggestion = candidate[len(last_word):]
-            if suggestion:  # Make sure we have a non-empty suggestion
-                return suggestion
-            i += 1
-        return ""
 
     def draw_interface(self, title, content):
         """Draw the interface using region-based updates with hardware optimization"""
@@ -506,8 +473,8 @@ class App(AppBase):
 
     def update_input_display(self):
         """Update the input display with current text and suggestion"""
-        self.current_suggestion = self.get_autocomplete_suggestion(self.currentline)
-        self.update_romanji_preview()  # Update Japanese preview
+        self.current_suggestion = self.text_input.suggestion
+        self.update_romanji_preview()
         self.draw_interface("Input", "")
 
     def clear_transient_ui(self):
@@ -536,6 +503,7 @@ class App(AppBase):
 
     def update(self):
         """Handle cursor blinking and TTS status updates"""
+        self.text_input.tick()
         current_time = time.time()
         cursor_blink_changed = False
         tts_status_changed = False
@@ -580,41 +548,21 @@ class App(AppBase):
             self.context["app_manager"].swap_app_async("proxi", "launcher", update_rate_hz=20.0, delay=0.1)
             return
         
-        if keycode == 'KEY_TAB' or keycode == 'KEY_RIGHTALT' or keycode == 'KEY_LEFTALT':
-            suggestion = self.get_autocomplete_suggestion(self.currentline)
-            if suggestion:
-                self.currentline += suggestion + ' '
-            self.update_input_display()
-            return
-
-        char = key_map.get(keycode, None)
-        if char is None:
-            return
-
         if keycode == 'KEY_ENTER':
-            if self.currentline.strip():  # Only process if there's actual text
-                # Add TTS request to queue
+            if self.currentline.strip():
                 self.add_tts_request(self.currentline)
-                
-                # Clear input immediately and allow new input
-                old_line = self.currentline
                 self.currentline = ""
                 self.current_suggestion = ""
-                self._in_input_mode = False  # Reset input mode
-                
-                # Show ready state
+                self.text_input.clear()
+                self._in_input_mode = False
                 self.draw_interface("Ready", "Start typing to see suggestions. Press [ESC] to return to launcher.")
-                
-        elif keycode == 'KEY_BACKSPACE':
-            self._in_input_mode = True  # Enter input mode
-            self.currentline = self.currentline[:-1]
-            self.update_input_display()
-            
-        else:
-            self._in_input_mode = True  # Enter input mode
-            self.currentline += char
-            self.update_input_display()
-    
+            return
+
+        self.text_input.key_down(keycode)
+
+    def onkeyup(self, keycode):
+        self.text_input.key_up(keycode)
+
     def stop(self):
         print("[Proxi] Stopped")
         # Clean up any running TTS
