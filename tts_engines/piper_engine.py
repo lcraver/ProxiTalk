@@ -299,7 +299,8 @@ class PiperEngine(TTSEngine):
 
     @classmethod
     def is_available(cls, resources: EngineResources) -> bool:
-        return bool(resources.paths.get("piper_bin"))
+        bin_path = resources.paths.get("piper_bin")
+        return bool(bin_path) and os.path.exists(bin_path)
 
     def initialize(self) -> None:
         self._discover_models()

@@ -653,7 +653,8 @@ class PyOpenJTalkEngine(TTSEngine):
 
     @classmethod
     def is_available(cls, resources: EngineResources) -> bool:
-        return PYOPENJTALK_PLUS_AVAILABLE and bool(resources.paths.get("openjtalk_htsvoice_dir"))
+        htsvoice_dir = resources.paths.get("openjtalk_htsvoice_dir")
+        return PYOPENJTALK_PLUS_AVAILABLE and bool(htsvoice_dir) and os.path.isdir(htsvoice_dir)
 
     def initialize(self) -> None:
         if not PYOPENJTALK_PLUS_AVAILABLE:

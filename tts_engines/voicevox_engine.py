@@ -194,7 +194,8 @@ class VoiceVoxEngine(TTSEngine):
 
     @classmethod
     def is_available(cls, resources: EngineResources) -> bool:
-        return bool(resources.paths.get("voicevox_bin"))
+        bin_path = resources.paths.get("voicevox_bin")
+        return bool(bin_path) and os.path.exists(bin_path)
 
     def initialize(self) -> None:
         speaker_id = 2
