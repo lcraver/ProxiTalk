@@ -22,6 +22,9 @@ Pick which engines are active, adjust voices, and tune speech defaults.
 ### ![App Reboot Icon](apps/_Settings/reboot/icon.png) App Reboot
 Soft-restart the runtime when you need a quick clean slate.
 
+### ![WiFi Settings Icon](apps/_Settings/wifi_settings/icon.png) WiFi Settings
+Scan for nearby networks and connect directly from the device.
+
 ### ![Discourse Chat Icon](apps/_Internet/discourse_chat/icon.png) Discourse Chat
 Chat with The Garden forums directly from your ProxiTalk handheld.
 
@@ -48,13 +51,13 @@ Check the public repo for updates and sync apps/overlays in place.
 ### ![Video Player Icon](apps/_Utils/video_player/icon.png) Video Player
 Drop in an MP4 and play it back on the ProxiTalk display.
 
+### ![Tracker Icon](apps/_Utils/tracker/icon.png) Tracker
+4-track, 16-step music tracker with synthesised tones.
+
 ## Games
 
 ### ![Doom Clone Icon](apps/_Games/doom_clone/icon.png) Doom Clone
 Retro raycasting FPS demo lovingly inspired by DOOM.
-
-### ![Hebi Icon](apps/_Games/hebi/icon.png) Hebi
-Classic snake gameplay built for the ProxiTalk controls.
 
 ### ![Tetra Icon](apps/_Games/tetra/icon.png) Tetra
 Drop-block puzzle classic adapted to the 1-bit panel.
