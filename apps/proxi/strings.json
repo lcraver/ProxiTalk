@@ -1,0 +1,8 @@
+{
+  "apps.proxi": {"en": "Proxi", "ja": "プロキシ"},
+  "apps.proxi.description": {"en": "TTS speaking program", "ja": "音声合成スピーチプログラム"},
+  "proxi.title": {"en": "Proxi", "ja": "プロキシ"},
+  "proxi.talking": {"en": "Talking", "ja": "話し中"},
+  "proxi.error": {"en": "Error", "ja": "エラー"},
+  "proxi.lang_hint": {"en": "CTRL: language", "ja": "CTRL: 言語切替"}
+}

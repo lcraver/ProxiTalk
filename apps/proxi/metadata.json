@@ -1,7 +1,8 @@
 {
   "name": "Proxi",
   "version": "1.0",
-  "cursor_enabled": true,
-  "description": "Proxi (or ProxiTalk) is the star application of the OS, used for quick TTS communication using the TTS Engines the OS is built on.",
-  "author": "Pidge"
+  "description": "TTS speaking program",
+  "author": "Pidge",
+  "type": "app",
+  "packages": ["display_gfx", "tts", "input", "ui", "language"]
 }

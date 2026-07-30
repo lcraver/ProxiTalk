@@ -41,6 +41,8 @@ class UserPreferences:
             "keyboard_device_path": None,  # Optional override for /dev/input/eventX
             "auto_sleep_minutes": 5,  # Minutes of inactivity before sleep (0 disables)
             "debug_piper_wav": False,  # Write .wav files alongside .raw cache entries for debugging
+            "language": "en",  # System-wide UI/speech language: "en" or "ja"
+            "auto_update_enabled": True,  # Check GitHub releases on startup and self-update
         }
     
     def _save_preferences(self) -> bool:
@@ -250,6 +252,27 @@ class UserPreferences:
         """Set inactivity timeout in minutes (values <=0 disable auto-sleep)."""
         safe_minutes = max(0.0, float(minutes))
         self._preferences["auto_sleep_minutes"] = safe_minutes
+        return self._save_preferences()
+
+    def get_language(self) -> str:
+        """Get the system-wide UI/speech language ('en' or 'ja')"""
+        return self._preferences.get("language", "en")
+
+    def set_language(self, language: str) -> bool:
+        """Set the system-wide UI/speech language ('en' or 'ja')"""
+        if language not in ("en", "ja"):
+            print(f"[Preferences] Invalid language: {language}")
+            return False
+        self._preferences["language"] = language
+        return self._save_preferences()
+
+    def get_auto_update_enabled(self) -> bool:
+        """Whether startup should check GitHub releases and self-update"""
+        return bool(self._preferences.get("auto_update_enabled", True))
+
+    def set_auto_update_enabled(self, enabled: bool) -> bool:
+        """Enable or disable the startup auto-update check"""
+        self._preferences["auto_update_enabled"] = bool(enabled)
         return self._save_preferences()
 
 # Global instance - will be initialized by main app

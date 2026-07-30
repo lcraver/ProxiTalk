@@ -12,3 +12,4 @@ Please refer to the guides in the sidebar of the wiki!
 
 ## Development
 - [Development - Apps](/Development---Apps) - Guide for developing applications for ProxiTalk
+- [Development - Core OS Architecture](/Development---Core-OS-Architecture) - How the in-progress `core_os` (v2) runtime is structured

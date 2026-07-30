@@ -1,0 +1,14 @@
+{
+  "apps.file_browser": {"en": "File Browser", "ja": "ファイル"},
+  "apps.file_browser.description": {"en": "Browse the whole filesystem, preview, rename, and delete files", "ja": "ファイルシステム全体の閲覧・プレビュー・名前変更・削除を行います"},
+  "file_browser.empty": {"en": "(empty folder)", "ja": "（空のフォルダ）"},
+  "file_browser.no_preview": {"en": "No preview available", "ja": "プレビューできません"},
+  "file_browser.binary": {"en": "(binary file)", "ja": "（バイナリファイル）"},
+  "file_browser.delete.title": {"en": "Delete", "ja": "削除"},
+  "file_browser.delete.message": {"en": "Delete '{name}'?", "ja": "'{name}' を削除しますか？"},
+  "file_browser.error.rename": {"en": "Rename failed", "ja": "名前変更に失敗しました"},
+  "file_browser.error.delete": {"en": "Delete failed", "ja": "削除に失敗しました"},
+  "file_browser.error.audio": {"en": "Couldn't play file", "ja": "再生できませんでした"},
+  "file_browser.audio.playing": {"en": "Playing", "ja": "再生中"},
+  "file_browser.audio.paused": {"en": "Paused", "ja": "一時停止"}
+}

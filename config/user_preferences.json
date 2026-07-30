@@ -1,7 +1,9 @@
 {
-  "last_launched_app": "proxi",
+  "last_launched_app": "file_browser",
   "launcher_selection": 0,
-  "hidden_apps": [],
+  "hidden_apps": [
+    "proxi"
+  ],
   "pinned_apps": [],
   "disabled_overlays": [],
   "tts_engine": "piper",
@@ -13,5 +15,6 @@
   "pyopenjtalk_voice": null,
   "keyboard_device_path": null,
   "auto_sleep_minutes": 5,
-  "debug_piper_wav": true
+  "debug_piper_wav": true,
+  "language": "en"
 }

@@ -1,0 +1,16 @@
+{
+  "name": "File Browser",
+  "version": "1.0",
+  "description": "Basic file browser and viewer",
+  "author": "Pidge",
+  "type": "app",
+  "packages": [
+    "display_gfx",
+    "ui",
+    "files",
+    "images",
+    "language",
+    "input",
+    "audio"
+  ]
+}

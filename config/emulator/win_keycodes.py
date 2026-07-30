@@ -63,6 +63,27 @@ WIN_TO_LINUX_KEYCODE = {
     '=': 'KEY_EQUAL',
     '-': 'KEY_MINUS',
 
+    # The `keyboard` library sometimes reports a key's SHIFTED character as
+    # its name instead of the physical key (already true for '?' above) --
+    # these map that shifted character back to the same base physical
+    # keycode as its unshifted digit/symbol, so shift state stays purely a
+    # matter of tracking KEY_LEFTSHIFT and is resolved once, centrally, in
+    # bootstrap.py (see config/keymap.py's shift_key_map) rather than here.
+    '!': 'KEY_1',
+    '@': 'KEY_2',
+    '#': 'KEY_3',
+    '$': 'KEY_4',
+    '%': 'KEY_5',
+    '^': 'KEY_6',
+    '&': 'KEY_7',
+    '*': 'KEY_8',
+    '(': 'KEY_9',
+    ')': 'KEY_0',
+    '{': 'KEY_LEFTBRACE',
+    '}': 'KEY_RIGHTBRACE',
+    '<': 'KEY_COMMA',
+    '>': 'KEY_DOT',
+
     'volume up': 'KEY_VOLUMEUP',
     'volume down': 'KEY_VOLUMEDOWN',
     

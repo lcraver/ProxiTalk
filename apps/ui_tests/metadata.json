@@ -1,0 +1,8 @@
+{
+  "name": "UI Test",
+  "version": "1.0",
+  "description": "Gallery of UI widgets",
+  "author": "Pidge",
+  "type": "app",
+  "packages": ["display_gfx", "ui", "images", "animation", "leds", "input"]
+}

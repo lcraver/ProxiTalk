@@ -1,0 +1,4 @@
+{
+  "apps.launcher": {"en": "Launcher", "ja": "ランチャー"},
+  "apps.launcher.description": {"en": "Browse and launch installed apps.", "ja": "インストール済みアプリの一覧・起動。"}
+}

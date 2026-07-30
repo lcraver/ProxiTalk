@@ -1,0 +1,9 @@
+{
+  "name": "Settings",
+  "version": "1.0",
+  "description": "Setup and configure your device",
+  "author": "Pidge",
+  "type": "app",
+  "cursor_enabled": false,
+  "packages": ["display_gfx", "ui", "storage", "apps_registry", "language", "animation"]
+}

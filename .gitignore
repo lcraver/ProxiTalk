@@ -183,7 +183,14 @@ cython_debug/
 piper_cache/*.*
 piper_cache
 config/user_preferences.json
+config/shared_config.json
 config/discourse_login.conf
+apps/**/config.json
+
+# onnxruntime's auto-generated graph-optimization cache, written next to a
+# .onnx model the first time it's loaded -- derived/regenerable, not source.
+tts/piper_plus/*.opt.onnx
+tts/piper_plus/*.onnx.ok
 
 # Discourse chat session cache files (contain authentication tokens)
 apps/discourse_chat/session_cache.json

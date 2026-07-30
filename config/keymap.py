@@ -17,8 +17,18 @@ key_map = {
     'KEY_AT': '@', 'KEY_HASH': '#', 'KEY_DOLLAR': '$',
     'KEY_PIPE': '|', 'KEY_GRAVE': '`', 'KEY_TILDE': '~',
     'KEY_UNDERSCORE': '_', 'KEY_PLUS': '+',
+    'KEY_PERCENT': '%', 'KEY_CARET': '^', 'KEY_AMPERSAND': '&',
+    'KEY_ASTERISK': '*', 'KEY_LEFTPAREN': '(', 'KEY_RIGHTPAREN': ')',
+    'KEY_COLON': ':', 'KEY_LESS': '<', 'KEY_GREATER': '>',
+    'KEY_LEFTCURLY': '{', 'KEY_RIGHTCURLY': '}',
 }
 
+# Every shifted symbol reachable from a physical key that exists on either
+# platform (Windows emulator's full keyboard, or the device's 5x10 matrix,
+# which only has digits/shift/comma/colon among these) -- resolved centrally
+# in bootstrap.py's dispatch loop via input.apply_shift_mapping(), the same
+# place proxitalk.py (V1) resolves shift for the same reason: a physical key
+# only identifies itself once, shift is a second, simultaneous key.
 shift_key_map = {
     'KEY_SLASH': 'KEY_QUESTION',
     'KEY_BACKSLASH': 'KEY_PIPE',
@@ -26,4 +36,18 @@ shift_key_map = {
     'KEY_SPACE': 'KEY_TAB',
     'KEY_MINUS': 'KEY_UNDERSCORE',
     'KEY_EQUAL': 'KEY_PLUS',
+    'KEY_1': 'KEY_EXCLAMATION',
+    'KEY_2': 'KEY_AT',
+    'KEY_3': 'KEY_HASH',
+    'KEY_4': 'KEY_DOLLAR',
+    'KEY_5': 'KEY_PERCENT',
+    'KEY_6': 'KEY_CARET',
+    'KEY_7': 'KEY_AMPERSAND',
+    'KEY_8': 'KEY_ASTERISK',
+    'KEY_9': 'KEY_LEFTPAREN',
+    'KEY_0': 'KEY_RIGHTPAREN',
+    'KEY_COMMA': 'KEY_LESS',
+    'KEY_DOT': 'KEY_GREATER',
+    'KEY_LEFTBRACE': 'KEY_LEFTCURLY',
+    'KEY_RIGHTBRACE': 'KEY_RIGHTCURLY',
 }

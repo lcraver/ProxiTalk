@@ -1,0 +1,11 @@
+{
+  "apps.settings": {"en": "Settings", "ja": "設定"},
+  "apps.settings.reading": {"ja": "せってい"},
+  "apps.settings.description": {"en": "Setup and configure your device", "ja": "デバイスの設定を行います"},
+  "app_settings.title_prefix": {"en": "Settings", "ja": "設定"},
+  "app_settings.tab.visibility": {"en": "Visibility", "ja": "表示"},
+  "app_settings.tab.pinned": {"en": "Pinned", "ja": "ピン留め"},
+  "app_settings.tab.language": {"en": "Language", "ja": "言語"},
+  "language.english": {"en": "English", "ja": "英語"},
+  "language.japanese": {"en": "Japanese", "ja": "日本語"}
+}
