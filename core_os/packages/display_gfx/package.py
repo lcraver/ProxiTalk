@@ -17,6 +17,8 @@ from typing import Any, Callable, Dict, Optional, Tuple
 from PIL import Image, ImageDraw, ImageFont
 
 from core_os.packages.base import Package, PackageResources
+from core_os.packages.display_gfx import pattern as pattern_module
+from core_os.packages.display_gfx.pattern import Pattern
 
 
 class _Layer:
@@ -65,6 +67,8 @@ class DisplayGfxPackage(Package):
         self._batch_depth = 0
         self._cursor_enabled = False
 
+        self._display = display
+
         font_path = self.resources.paths.get("font_path")
         # misaki_gothic.ttf embeds bitmap strikes only at multiples of its
         # native 8x8 pixel grid (8/16/24/...) — any other size forces
@@ -91,6 +95,24 @@ class DisplayGfxPackage(Package):
             self.fonts = {"small": default_font, "default": default_font, "large": default_font}
 
         self._flush()
+
+    # --- collider debug overlay --------------------------------------------
+    # Package-internal (attribute access, like draw_image/clear_area below) --
+    # SpriteList holds this same DisplayGfxPackage instance (see sprite.py's
+    # own docstring on that convention), not the app-facing context dict, so
+    # these aren't in get_public_api. Forwards to the backend the same
+    # defensive-getattr way _forward_debug_region does above: device_pi has
+    # no F2 dev HUD to feed, so these are no-ops there.
+
+    def clear_collider_regions(self) -> None:
+        fn = getattr(self._display, "clear_collider_regions", None)
+        if fn:
+            fn()
+
+    def report_collider(self, x: int, y: int, width: int, height: int) -> None:
+        fn = getattr(self._display, "add_collider_region", None)
+        if fn:
+            fn(x, y, width, height)
 
     # --- compositing ------------------------------------------------------
 
@@ -217,6 +239,43 @@ class DisplayGfxPackage(Package):
         self._base.mark(x, y, width, height)
         self._flush()
 
+    def _paint_pattern(
+        self, image: Image.Image, x: int, y: int, width: int, height: int,
+        pattern: Pattern, fill: int, bg: int,
+        radius: int = 0, corners: Optional[Tuple[bool, bool, bool, bool]] = None,
+    ) -> None:
+        # One 8x8 tile built once, then pasted across the rect in 8px
+        # steps -- cheaper than a per-pixel Python loop over the whole
+        # rect, and needs no numpy (nothing else in this package uses it).
+        tile = Image.new("1", (8, 8))
+        tile.putdata([fill if (row >> (7 - col)) & 1 else bg for row in pattern for col in range(8)])
+        # radius>0: only paste where a rounded-rect mask says "inside" --
+        # e.g. a dithered card cell that happens to sit in the card's own
+        # rounded corner shouldn't square that corner back off by painting
+        # over it edge-to-edge (see modifier_hud's dithered special keys,
+        # which can land in the same cell as the card's rounded top edge).
+        mask = None
+        if radius > 0:
+            mask = Image.new("1", (width, height), 0)
+            ImageDraw.Draw(mask).rounded_rectangle([0, 0, width - 1, height - 1], radius=radius, fill=1, corners=corners)
+        for ty in range(0, height, 8):
+            th = min(8, height - ty)
+            for tx in range(0, width, 8):
+                tw = min(8, width - tx)
+                chunk = tile if (tw, th) == (8, 8) else tile.crop((0, 0, tw, th))
+                mask_chunk = mask.crop((tx, ty, tx + tw, ty + th)) if mask is not None else None
+                image.paste(chunk, (x + tx, y + ty), mask=mask_chunk)
+
+    def draw_area_pattern(
+        self, x: int, y: int, width: int, height: int,
+        pattern: Pattern, fill: int = 255, bg: int = 0,
+    ) -> None:
+        if width <= 0 or height <= 0:
+            return
+        self._paint_pattern(self._base.image, x, y, width, height, pattern, fill, bg)
+        self._base.mark(x, y, width, height)
+        self._flush()
+
     def invert_area(self, x: int, y: int, width: int, height: int) -> None:
         """Flip every pixel in this rect: 0<->255. Used for "inverted"
         containers (ui.layout._Stack's `inverted`) — rather than asking
@@ -276,8 +335,29 @@ class DisplayGfxPackage(Package):
         self._overlay.mark(x, y, img.width, img.height)
         self._flush()
 
-    def draw_overlay_area(self, x: int, y: int, width: int, height: int, fill: int = 255) -> None:
-        ImageDraw.Draw(self._overlay.image).rectangle([x, y, x + width - 1, y + height - 1], fill=fill)
+    def draw_overlay_area(
+        self, x: int, y: int, width: int, height: int, fill: int = 255,
+        radius: int = 0, corners: Optional[Tuple[bool, bool, bool, bool]] = None,
+    ) -> None:
+        box = [x, y, x + width - 1, y + height - 1]
+        if radius > 0:
+            # corners is (top_left, top_right, bottom_right, bottom_left) --
+            # None means all four, matching ImageDraw.rounded_rectangle's own
+            # default, so passing just `radius` still rounds the whole rect.
+            ImageDraw.Draw(self._overlay.image).rounded_rectangle(box, radius=radius, fill=fill, corners=corners)
+        else:
+            ImageDraw.Draw(self._overlay.image).rectangle(box, fill=fill)
+        self._overlay.mark(x, y, width, height)
+        self._flush()
+
+    def draw_overlay_area_pattern(
+        self, x: int, y: int, width: int, height: int,
+        pattern: Pattern, fill: int = 255, bg: int = 0,
+        radius: int = 0, corners: Optional[Tuple[bool, bool, bool, bool]] = None,
+    ) -> None:
+        if width <= 0 or height <= 0:
+            return
+        self._paint_pattern(self._overlay.image, x, y, width, height, pattern, fill, bg, radius, corners)
         self._overlay.mark(x, y, width, height)
         self._flush()
 
@@ -497,6 +577,7 @@ class DisplayGfxPackage(Package):
             "draw_text_inverted": self.draw_text_inverted,
             "draw_image": self.draw_image,
             "draw_area": self.draw_area,
+            "draw_area_pattern": self.draw_area_pattern,
             "invert_area": self.invert_area,
             "capture_area": self.capture_area,
             "clear_area": self.clear_area,
@@ -505,7 +586,10 @@ class DisplayGfxPackage(Package):
             "draw_overlay_text_inverted": self.draw_overlay_text_inverted,
             "draw_overlay_image": self.draw_overlay_image,
             "draw_overlay_area": self.draw_overlay_area,
+            "draw_overlay_area_pattern": self.draw_overlay_area_pattern,
             "clear_overlay_area": self.clear_overlay_area,
+            "patterns": pattern_module.PRESETS,
+            "make_pattern": pattern_module.from_coverage,
             "begin_batch": self.begin_batch,
             "end_batch": self.end_batch,
             "update_region": self.update_region,

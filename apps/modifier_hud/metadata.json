@@ -1,0 +1,9 @@
+{
+  "name": "Modifier HUD",
+  "version": "1.0",
+  "description": "Overlay card that pops up from the bottom while ALT/CTRL/CMD/FN are held.",
+  "author": "Pidge",
+  "type": "overlay",
+  "cursor_enabled": false,
+  "packages": ["display_gfx", "animation", "timer", "input"]
+}

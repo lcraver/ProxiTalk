@@ -11,6 +11,7 @@
     "images",
     "language",
     "input",
-    "audio"
+    "audio",
+    "timer"
   ]
 }

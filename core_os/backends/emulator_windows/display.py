@@ -49,6 +49,10 @@ class EmulatorDisplayDriver(DisplayDriver):
     def stop(self) -> None:
         self._impl.stop()
 
+    def is_running(self) -> bool:
+        fn = getattr(self._impl, "is_running", None)
+        return fn() if fn else True
+
     def is_window_focused(self) -> bool:
         fn = getattr(self._impl, "is_window_focused", None)
         return fn() if fn else True

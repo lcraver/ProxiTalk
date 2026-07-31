@@ -1,0 +1,9 @@
+{
+  "name": "Sprite Demo",
+  "version": "1.0",
+  "description": "A tiny Asteroids clone -- rotate, thrust, shoot, and split rocks apart using the sprite/timer/geometry packages.",
+  "author": "Pidge",
+  "type": "app",
+  "cursor_enabled": false,
+  "packages": ["display_gfx", "sprite", "timer", "geometry"]
+}

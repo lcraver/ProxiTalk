@@ -1,0 +1,4 @@
+{
+  "apps.sprite_demo": {"en": "Sprite Demo", "ja": "Sprite Demo"},
+  "apps.sprite_demo.description": {"en": "A tiny Asteroids clone -- rotate, thrust, shoot, and split rocks apart using the sprite/timer/geometry packages.", "ja": "A tiny Asteroids clone -- rotate, thrust, shoot, and split rocks apart using the sprite/timer/geometry packages."}
+}

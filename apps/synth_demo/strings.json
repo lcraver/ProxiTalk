@@ -1,0 +1,4 @@
+{
+  "apps.synth_demo": {"en": "Synth Demo", "ja": "Synth Demo"},
+  "apps.synth_demo.description": {"en": "Hold 1-5 to sustain each waveform; ENTER/6/7/8 play test songs, 9 plays a real MIDI file -- exercises the synth package's real-time note_on/note_off engine and the midi package's file parser, with a live oscilloscope/level-meter visualizer.", "ja": "Hold 1-5 to sustain each waveform; ENTER/6/7/8 play test songs, 9 plays a real MIDI file -- exercises the synth package's real-time note_on/note_off engine and the midi package's file parser, with a live oscilloscope/level-meter visualizer."}
+}

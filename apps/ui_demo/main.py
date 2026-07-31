@@ -1,5 +1,5 @@
-"""UI Test — a tabbed gallery exercising every widget in the ui/images/
-animation/leds packages, for quickly checking a change looks right without
+"""UI Demo — a tabbed gallery exercising every widget in the ui/images/
+animation packages, for quickly checking a change looks right without
 writing a one-off headless script each time.
 
 LEFT/RIGHT switch tabs; ESC returns to the launcher. Each tab owns its own
@@ -11,42 +11,11 @@ app_settings) since it needs the full alphabet for typing.
 from __future__ import annotations
 
 import os
-import time
 
 from core_os.apps_runtime.app_base import AppBase
 
 _CONTENT_MARGIN = 4
 _HEADER_GAP = 2
-
-
-class _Swatch:
-    """Fixed-size leaf widget that draws via an arbitrary callback instead
-    of text -- used by the `rendering` tab to prove layout.Column(scroll=True)
-    scrolls whatever's handed to it (draw_area/invert_area/overlay swatches
-    here), not just wrapped text like ScrollPanel. Centers itself within
-    whatever bounds it's actually given (which, via fill()/the cross-axis
-    always getting the full inner width/height regardless of size tag --
-    see layout._Stack.set_bounds's Pass 2 -- can be bigger than `size`),
-    rather than always drawing flush at its own top-left corner."""
-
-    def __init__(self, size: int, draw_fn) -> None:
-        self._size = size
-        self._draw_fn = draw_fn
-        self.x = self.y = self.width = self.height = 0
-
-    def measure(self, available_w: int, available_h: int):
-        return (self._size, self._size)
-
-    def set_bounds(self, x: int, y: int, width: int, height: int) -> None:
-        self.x, self.y, self.width, self.height = x, y, width, height
-
-    def draw(self) -> None:
-        ox = self.x + max(0, (self.width - self._size) // 2)
-        oy = self.y + max(0, (self.height - self._size) // 2)
-        self._draw_fn(ox, oy)
-
-    def handle_key(self, keycode: str) -> bool:
-        return False
 
 
 _TABS = [
@@ -59,11 +28,9 @@ _TABS = [
     "text_box",
     "layout",
     "images",
+    "pattern",
     "animation",
     "tween",
-    "rendering",
-    "scroll_modes",
-    "leds",
 ]
 
 _HINTS = {
@@ -76,12 +43,20 @@ _HINTS = {
     "text_box": "(static, max_lines=2)",
     "layout": "(static Row/Column)",
     "images": "(static draw_file + gif)",
+    "pattern": "(static dither swatches)",
     "animation": "Enter: replay slide+scale",
     "tween": "(auto: linear/in/out/in_out)",
-    "rendering": "UP/DOWN scroll",
-    "scroll_modes": "Enter: toggle snap/free  UP/DOWN scroll",
-    "leds": "1 Solid  2 Blink  3 Chase  0 Off",
 }
+
+# Label -> display_gfx.patterns preset name, in ascending gray order --
+# draw_area_pattern's dithered fill demo.
+_PATTERN_SWATCHES = (
+    ("0%", "black"),
+    ("25%", "gray-25"),
+    ("50%", "gray-50"),
+    ("75%", "gray-75"),
+    ("100%", "white"),
+)
 
 _LOREM = (
     "This ScrollPanel word-wraps a long block of text to the given width "
@@ -99,19 +74,18 @@ class App(AppBase):
         self.ui = context["ui"]
         self.images = context["images"]
         self.animation = context["animation"]
-        self.leds = context["leds"]
         self.input = context["input"]
         self.app_control = context["app_control"]
+        self.timers = context["timer"]["timer_manager"]()
         self.screen_width = context["screen_width"]
         self.screen_height = context["screen_height"]
 
         self.tab_index = 0
-        self._last_update_time = None
         self._state = {}
         self._content_top = 0
 
     def start(self):
-        print("[UI Test] Started")
+        print("[UI Demo] Started")
         self._enter_tab()
 
     # --- tab plumbing ------------------------------------------------------
@@ -360,7 +334,8 @@ class App(AppBase):
         inner_width = max(0, content_width - 2 *
                           (outer_margin + outer_border + outer_padding))
         spacer_width = inner_width // 3
-        spacer_box = self.ui["row"]([self.ui["fill"](self.ui["label"]("BOX", align="center"))], border=1, padding=2)
+        spacer_box = self.ui["row"](
+            [self.ui["fill"](self.ui["label"]("BOX", align="center"))], border=1, padding=2)
 
         content1 = self.ui["row"](
             [(spacer_box, spacer_width), self.ui["fill"](stack)],
@@ -397,8 +372,12 @@ class App(AppBase):
         auto-detected from the path extension."""
         x, y, width, height = self._content_rect()
         font = self.gfx["fonts"]["small"]
-        icon_path = os.path.join(os.path.dirname(__file__), "..", "proxi", "icon.png")
-        gif_path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "startup.gif")
+        icon_path = os.path.join(os.path.dirname(
+            __file__), "..", "proxi", "icon.png")
+        gif_path = os.path.join(os.path.dirname(
+            __file__), "..", "..", "files", "small gif test.gif")
+
+        print(f"[UI Demo] Loading images: {icon_path}, {gif_path}")
 
         icon_label = self.ui["text_box"]("image:", font=font, max_lines=2)
         gif_label = self.ui["text_box"]("gif:", font=font, max_lines=2)
@@ -407,16 +386,40 @@ class App(AppBase):
         gif_image = self.ui["image"](gif_path, size="fill", loop=True)
         self._state["images"] = [icon_image, gif_image]
 
-        icon_box = self.ui["row"]([self.ui["fill"](icon_image)], border=1, padding=2)
-        gif_box = self.ui["row"]([self.ui["fill"](gif_image)], border=1, padding=2)
-        icon_card = self.ui["column"]([self.ui["content"](icon_label), self.ui["fill"](icon_box)], spacing=2)
-        gif_card = self.ui["column"]([self.ui["content"](gif_label), self.ui["fill"](gif_box)], spacing=2)
-        root = self.ui["row"]([self.ui["fill"](icon_card), self.ui["fill"](gif_card)], spacing=4)
+        icon_box = self.ui["row"](
+            [self.ui["fill"](icon_image)], border=1, padding=2)
+        gif_box = self.ui["row"](
+            [self.ui["fill"](gif_image)], border=1, padding=2)
+        icon_card = self.ui["column"](
+            [self.ui["content"](icon_label), self.ui["fill"](icon_box)], spacing=2)
+        gif_card = self.ui["column"](
+            [self.ui["content"](gif_label), self.ui["fill"](gif_box)], spacing=2)
+        root = self.ui["row"](
+            [self.ui["fill"](icon_card), self.ui["fill"](gif_card)], spacing=4)
         self.ui["layout_root"](root, x=x, y=y, width=width, height=height)
 
     def _update_images(self, dt):
         for image in self._state.get("images", []):
             image.update(dt)
+
+    # --- pattern --------------------------------------------------------
+
+    def _build_pattern(self):
+        """Static row of gray swatches via draw_area_pattern -- each one an
+        8x8 Bayer-dither tile (display_gfx/pattern.py) repeated across the
+        swatch's width/height, simulating a gray level on this 1-bit
+        display instead of the flat black/white draw_area gives you."""
+        x, y, width, height = self._content_rect()
+        font = self.gfx["fonts"]["small"]
+        label_h = self.gfx["line_height"]("Ag", font)
+        swatch_h = max(8, height - label_h - 2)
+        swatch_w = width // len(_PATTERN_SWATCHES)
+
+        for i, (label, preset_name) in enumerate(_PATTERN_SWATCHES):
+            sx = x + i * swatch_w
+            self.gfx["draw_area_pattern"](
+                sx, y, swatch_w - 1, swatch_h, self.gfx["patterns"][preset_name])
+            self.gfx["draw_text"](label, sx, y + swatch_h + 2, font=font)
 
     # --- animation ----------------------------------------------------------
 
@@ -518,137 +521,10 @@ class App(AppBase):
                 row["dir"] *= -1
                 self._start_tween_row(row)
 
-    # --- rendering ----------------------------------------------------------
-
-    def _rendering_row(self, swatch_size, draw_fn, label_text):
-        font = self.gfx["fonts"]["small"]
-        swatch = _Swatch(swatch_size, draw_fn)
-        label = self.ui["label"](label_text, font=font)
-        return self.ui["row"]([self.ui["content"](swatch), self.ui["content"](label)], spacing=4)
-
-    def _build_rendering(self):
-        """One row per display_gfx primitive no other tab touches -- a
-        filled rect (draw_area), a filled rect with an inverted sub-region
-        (invert_area, same mechanism layout._Stack uses for its `inverted`
-        boxes), and the overlay layer (draw_overlay_area). Scrolled via
-        column(scroll=True) rather than a hand-rolled offset, proving the
-        modular scroll works for arbitrary drawn content, not just text
-        (see ScrollPanel, which is the text-only special case of the same
-        primitive)."""
-        x, y, width, height = self._content_rect()
-        swatch = 20
-
-        def draw_area_swatch(px, py):
-            self.gfx["draw_area"](px, py, swatch, swatch)
-
-        def invert_area_swatch(px, py):
-            self.gfx["draw_area"](px, py, swatch, swatch)
-            self.gfx["invert_area"](px + 5, py + 5, swatch - 10, swatch - 10)
-
-        def overlay_swatch(px, py):
-            self.gfx["draw_overlay_area"](px, py, swatch, swatch, fill=255)
-
-        rows = [
-            self.ui["content"](self._rendering_row(
-                swatch, draw_area_swatch, "draw_area")),
-            self.ui["content"](self._rendering_row(
-                swatch, invert_area_swatch, "invert_area")),
-            self.ui["content"](self._rendering_row(
-                swatch, overlay_swatch, "overlay")),
-        ]
-        column = self.ui["column"](rows, spacing=4, scroll=True)
-
-        self._state["rendering"] = column
-        self._state["rendering_rect"] = (x, y, width, height)
-        # The overlay swatch's ink lives on a layer separate from the base
-        # one column.draw() clears -- without this, scrolling it out of
-        # view would leave it ghosted behind whatever scrolls into its spot.
-        self.gfx["clear_overlay_area"](x, y, width, height)
-        column.set_bounds(x, y, width, height)
-        column.draw()
-
-    def _onkeydown_rendering(self, keycode):
-        self.gfx["clear_overlay_area"](*self._state["rendering_rect"])
-        self._state["rendering"].handle_key(keycode)
-
-    # --- scroll_modes ---------------------------------------------------
-
-    _SCROLL_MODES_LINE_COUNT = 10
-
-    def _build_scroll_modes(self):
-        self._state["scroll_modes_snap"] = True
-        self._rebuild_scroll_modes()
-
-    def _rebuild_scroll_modes(self):
-        """Same content, same column(scroll=True), rebuilt with `scroll_snap`
-        flipped by Enter -- side by side this would just be two scrollers,
-        but toggling one in place makes the difference (whole-row jumps vs.
-        pixel-stepped, partially-visible rows) obvious without needing to
-        remember what the other one looked like."""
-        x, y, width, height = self._content_rect()
-        font = self.gfx["fonts"]["small"]
-        snap = self._state["scroll_modes_snap"]
-
-        mode_label = self.ui["label"](
-            f"mode: {'snap' if snap else 'free'}", font=font)
-        lines = [
-            self.ui["content"](self.ui["label"](
-                f"Line {i} of sample text", font=font))
-            for i in range(self._SCROLL_MODES_LINE_COUNT)
-        ]
-        scroller = self.ui["column"](
-            lines, spacing=1, scroll=True, scroll_snap=snap, scroll_step=4)
-        root = self.ui["column"](
-            [self.ui["content"](mode_label), self.ui["fill"](scroller)], spacing=2)
-        root.set_bounds(x, y, width, height)
-        root.draw()
-        self._state["scroll_modes_root"] = root
-
-    def _onkeydown_scroll_modes(self, keycode):
-        if keycode == "KEY_ENTER":
-            self._state["scroll_modes_snap"] = not self._state["scroll_modes_snap"]
-            self._rebuild_scroll_modes()
-            return
-        self._state["scroll_modes_root"].handle_key(keycode)
-
-    # --- leds -----------------------------------------------------------
-
-    def _build_leds(self):
-        self._state["leds_status"] = "off"
-        self._draw_leds_status()
-
-    def _draw_leds_status(self):
-        x, y, width, height = self._content_rect()
-        self.gfx["clear_area"](x, y, width, height)
-        font = self.gfx["fonts"]["small"]
-        text = f"leds: {self._state['leds_status']}"
-        text_w, text_h = self.gfx["get_text_size"](text, font)
-        text_x, text_y = self._centered_origin(text_w, text_h)
-        self.gfx["draw_text"](text, text_x, text_y, font=font)
-
-    def _onkeydown_leds(self, keycode):
-        if keycode == "KEY_1":
-            self.leds["set_solid"](255, 0, 0)
-            self._state["leds_status"] = "solid red"
-        elif keycode == "KEY_2":
-            self.leds["blink"](0, 255, 0)
-            self._state["leds_status"] = "blink green"
-        elif keycode == "KEY_3":
-            self.leds["chase"]([(0, 0, 255), (255, 255, 255)])
-            self._state["leds_status"] = "chase blue/white"
-        elif keycode == "KEY_0":
-            self.leds["off"]()
-            self._state["leds_status"] = "off"
-        else:
-            return
-        self._draw_leds_status()
-
     # --- app lifecycle ------------------------------------------------------
 
     def update(self):
-        now = time.monotonic()
-        dt = 0.0 if self._last_update_time is None else now - self._last_update_time
-        self._last_update_time = now
+        dt = self.timers.tick()
         update_fn = getattr(self, f"_update_{self._tab_name()}", None)
         if update_fn:
             update_fn(dt)
@@ -668,4 +544,4 @@ class App(AppBase):
             onkeydown_fn(keycode)
 
     def stop(self):
-        print("[UI Test] Stopped")
+        print("[UI Demo] Stopped")

@@ -16,8 +16,14 @@ import wave
 
 import pygame
 
+from core_os.core import debug_log
+
 IS_WINDOWS = platform.system() == "Windows"
 MIXER_SETTINGS = {"frequency": 22050, "size": -16, "channels": 1}
+
+
+def _dbg(msg: str, **kwargs) -> None:
+    print(msg, **kwargs)
 
 
 def _ensure_mixer_initialized() -> None:
@@ -26,15 +32,15 @@ def _ensure_mixer_initialized() -> None:
         if pygame.mixer.get_init():
             return
     except pygame.error as exc:
-        print(f"[Audio] Mixer state check failed: {exc}")
+        _dbg(f"[Audio] Mixer state check failed: {exc}")
     try:
         pygame.mixer.init(**MIXER_SETTINGS)
-        print(
+        _dbg(
             f"[Audio] Pygame mixer initialized: {MIXER_SETTINGS['frequency']}Hz, 16-bit mono",
             flush=True,
         )
     except pygame.error as exc:
-        print(f"[Audio] Failed to initialize pygame mixer: {exc}", flush=True)
+        _dbg(f"[Audio] Failed to initialize pygame mixer: {exc}", flush=True)
 
 
 def initialize_audio_system() -> None:
@@ -44,9 +50,12 @@ def initialize_audio_system() -> None:
 
 def play_sfx_internal(path: str) -> None:
     if not os.path.isfile(path):
-        print(f"[Audio] File not found: {path}", flush=True)
+        _dbg(f"[SFX] File not found: {path}", flush=True)
         return
 
+    _dbg(f"[SFX] Playing: {path}", flush=True)
+    status_key = f"sfx:{id(threading.current_thread())}"
+    debug_log.set_active(status_key, f"[SFX] {os.path.basename(path)}")
     try:
         if IS_WINDOWS:
             _ensure_mixer_initialized()
@@ -62,12 +71,16 @@ def play_sfx_internal(path: str) -> None:
             )
             _, stderr = proc.communicate()
             if proc.returncode not in (0, 124):
-                print(
-                    f"[Audio] aplay failed for SFX '{path}' with return code {proc.returncode}: {stderr.decode()}",
+                _dbg(
+                    f"[SFX] aplay failed for '{path}' with return code {proc.returncode}: {stderr.decode()}",
                     flush=True,
                 )
     except Exception as exc:
-        print(f"[Audio] Error playing wav file '{path}': {exc}", flush=True)
+        _dbg(f"[SFX] Error playing wav file '{path}': {exc}", flush=True)
+        return
+    finally:
+        debug_log.clear_active(status_key)
+    _dbg(f"[SFX] Finished: {path}", flush=True)
 
 
 def play_sfx(path: str) -> None:
@@ -121,18 +134,18 @@ class AudioStreamer:
 
     def start_stream(self, audio_file_path: str, start_offset: float = 0.0) -> bool:
         if not os.path.isfile(audio_file_path):
-            print(f"[AudioStream] File not found: {audio_file_path}", flush=True)
+            _dbg(f"[AudioStream] File not found: {audio_file_path}", flush=True)
             return False
 
         try:
             _ensure_mixer_initialized()
             mixer_info = pygame.mixer.get_init()
-            print(f"[AudioStream] Pygame mixer settings: {mixer_info}", flush=True)
+            _dbg(f"[AudioStream] Pygame mixer settings: {mixer_info}", flush=True)
         except Exception as exc:
-            print(f"[AudioStream] Error checking pygame mixer: {exc}", flush=True)
+            _dbg(f"[AudioStream] Error checking pygame mixer: {exc}", flush=True)
             return False
 
-        print(f"[AudioStream] Starting stream for: {audio_file_path}", flush=True)
+        _dbg(f"[AudioStream] Starting stream for: {audio_file_path}", flush=True)
 
         self.stop_stream()  # bumps self._generation, invalidating any thread still in flight
         self._stop_event.clear()
@@ -150,19 +163,19 @@ class AudioStreamer:
                 daemon=True,
             )
             self.stream_thread.start()
-            print("[AudioStream] Stream thread started", flush=True)
+            _dbg("[AudioStream] Stream thread started", flush=True)
             return True
         except Exception as exc:
-            print(f"[AudioStream] Error starting stream thread: {exc}", flush=True)
+            _dbg(f"[AudioStream] Error starting stream thread: {exc}", flush=True)
             self.is_streaming = False
             return False
 
     def _stream_audio_loop(self, audio_file_path: str, start_offset: float, generation: int) -> None:
         try:
-            print(f"[AudioStream] Loading audio file: {audio_file_path}", flush=True)
+            _dbg(f"[AudioStream] Loading audio file: {audio_file_path}", flush=True)
             raw, frame_size, framerate = self._load_raw(audio_file_path)
             if generation != self._generation or self._stop_event.is_set():
-                print("[AudioStream] Superseded before playback started, aborting", flush=True)
+                _dbg("[AudioStream] Superseded before playback started, aborting", flush=True)
                 return
 
             # Actual seek -- slice the offset's worth of frames off the
@@ -174,22 +187,23 @@ class AudioStreamer:
             start_byte = min(len(raw), max(0, int(start_offset * framerate)) * frame_size)
             sliced = raw[start_byte:]
             if not sliced:
-                print("[AudioStream] Seek offset past end of file", flush=True)
+                _dbg("[AudioStream] Seek offset past end of file", flush=True)
                 return
             sound = pygame.mixer.Sound(buffer=sliced)
             sound.set_volume(self.volume)
 
             if generation != self._generation or self._stop_event.is_set():
-                print("[AudioStream] Superseded before playback started, aborting", flush=True)
+                _dbg("[AudioStream] Superseded before playback started, aborting", flush=True)
                 return
 
-            print(f"[AudioStream] Starting playback (offset: {start_offset}s)", flush=True)
+            _dbg(f"[AudioStream] Starting playback (offset: {start_offset}s)", flush=True)
             channel = sound.play()
             if not channel:
-                print("[AudioStream] Failed to get audio channel", flush=True)
+                _dbg("[AudioStream] Failed to get audio channel", flush=True)
                 return
 
-            print("[AudioStream] Audio playback started successfully", flush=True)
+            _dbg("[AudioStream] Audio playback started successfully", flush=True)
+            debug_log.set_active("stream", f"[Stream] {os.path.basename(audio_file_path)}")
 
             while (
                 channel.get_busy()
@@ -199,12 +213,14 @@ class AudioStreamer:
             ):
                 if self.is_paused:
                     channel.pause()
-                    print("[AudioStream] Channel paused", flush=True)
+                    _dbg("[AudioStream] Channel paused", flush=True)
+                    debug_log.set_active("stream", f"[Stream] {os.path.basename(audio_file_path)} (paused)")
                     while self.is_paused and not self._stop_event.is_set() and generation == self._generation:
                         time.sleep(0.02)
                     if not self._stop_event.is_set() and self.is_streaming and generation == self._generation:
                         channel.unpause()
-                        print("[AudioStream] Channel unpaused", flush=True)
+                        _dbg("[AudioStream] Channel unpaused", flush=True)
+                        debug_log.set_active("stream", f"[Stream] {os.path.basename(audio_file_path)}")
 
                 # 20ms, not 100ms: stop_stream() joins this thread with a
                 # timeout, so this poll interval is also roughly how long a
@@ -213,22 +229,23 @@ class AudioStreamer:
                 # a big chunk of jogging's per-press latency.
                 pygame.time.wait(20)
 
-            print("[AudioStream] Audio playback finished", flush=True)
+            _dbg("[AudioStream] Audio playback finished", flush=True)
 
         except pygame.error as exc:
-            print(f"[AudioStream] Pygame error streaming audio '{audio_file_path}': {exc}", flush=True)
+            _dbg(f"[AudioStream] Pygame error streaming audio '{audio_file_path}': {exc}", flush=True)
         except Exception as exc:
-            print(f"[AudioStream] Error streaming audio '{audio_file_path}': {exc}", flush=True)
+            _dbg(f"[AudioStream] Error streaming audio '{audio_file_path}': {exc}", flush=True)
         finally:
             if generation == self._generation:
                 self.is_streaming = False
                 self.is_paused = False
+                debug_log.clear_active("stream")
 
     def pause_stream(self) -> None:
         if self.is_streaming and not self.is_paused:
             self.is_paused = True
             self.pause_time = time.time()
-            print("[AudioStream] Audio paused", flush=True)
+            _dbg("[AudioStream] Audio paused", flush=True)
 
     def resume_stream(self) -> None:
         if self.is_streaming and self.is_paused:
@@ -236,7 +253,7 @@ class AudioStreamer:
             if self.pause_time > 0:
                 pause_duration = time.time() - self.pause_time
                 self.start_time += pause_duration
-            print("[AudioStream] Audio resumed", flush=True)
+            _dbg("[AudioStream] Audio resumed", flush=True)
 
     def stop_stream(self) -> None:
         self.is_streaming = False
@@ -252,11 +269,12 @@ class AudioStreamer:
         self.current_audio_file = None
         self.start_time = 0.0
         self.pause_time = 0.0
-        print("[AudioStream] Audio stream stopped", flush=True)
+        debug_log.clear_active("stream")
+        _dbg("[AudioStream] Audio stream stopped", flush=True)
 
     def set_stream_volume(self, volume: float) -> None:
         self.volume = max(0.0, min(1.0, volume))
-        print(f"[AudioStream] Volume set to {self.volume:.2f}", flush=True)
+        _dbg(f"[AudioStream] Volume set to {self.volume:.2f}", flush=True)
 
     def get_current_position(self) -> float:
         if not self.is_streaming:
@@ -291,13 +309,14 @@ class MusicManager:
 
     def play_music(self, path: str, loop: bool = True) -> None:
         if not os.path.isfile(path):
-            print(f"[Music] File not found: {path}", flush=True)
+            _dbg(f"[Music] File not found: {path}", flush=True)
             return
 
         self.stop_music()
         self._stop_event.clear()
         self.current_music = path
         self.is_playing = True
+        _dbg(f"[Music] Starting: {path} (loop={loop})", flush=True)
 
         if IS_WINDOWS:
             self.music_thread = threading.Thread(
@@ -306,6 +325,8 @@ class MusicManager:
                 daemon=True,
             )
             self.music_thread.start()
+        else:
+            _dbg("[Music] No non-Windows playback path implemented; not starting thread", flush=True)
 
     def _play_music_loop(self, path: str, loop: bool) -> None:
         try:
@@ -314,24 +335,34 @@ class MusicManager:
                 sound = pygame.mixer.Sound(path)
                 sound.set_volume(self.volume)
                 channel = sound.play()
+                _dbg(f"[Music] Playback started: {path}", flush=True)
+                debug_log.set_active("music", f"[Music] {os.path.basename(path)}" + (" (loop)" if loop else ""))
                 while channel.get_busy() and not self._stop_event.is_set():
                     pygame.time.wait(100)
                 if not loop:
                     break
+                _dbg(f"[Music] Looping: {path}", flush=True)
         except Exception as exc:
-            print(f"[Music] Error playing music '{path}': {exc}", flush=True)
+            _dbg(f"[Music] Error playing music '{path}': {exc}", flush=True)
         finally:
             self.is_playing = False
+            debug_log.clear_active("music")
+            _dbg(f"[Music] Playback loop ended: {path}", flush=True)
 
     def stop_music(self) -> None:
+        was_playing = self.current_music
         self.is_playing = False
         self._stop_event.set()
         if self.music_thread and self.music_thread.is_alive():
             self.music_thread.join(timeout=1.0)
         self.current_music = None
+        debug_log.clear_active("music")
+        if was_playing:
+            _dbg(f"[Music] Stopped: {was_playing}", flush=True)
 
     def set_volume(self, volume: float) -> None:
         self.volume = max(0.0, min(1.0, volume))
+        _dbg(f"[Music] Volume set to {self.volume:.2f}", flush=True)
 
     def is_music_playing(self) -> bool:
         return self.is_playing
@@ -349,6 +380,15 @@ def wrap_raw_audio_as_wav(raw_bytes: bytes, sample_rate: int = 22050) -> io.Byte
 
 
 def play_audio_sync(audio_bytes: bytes) -> None:
+    _dbg(f"[Audio] play_audio_sync: {len(audio_bytes)} bytes, format={'WAV' if audio_bytes.startswith(b'RIFF') else 'raw PCM'}", flush=True)
+    debug_log.set_active("audio_sync", "[Audio] Playing synthesized audio")
+    try:
+        _play_audio_sync_inner(audio_bytes)
+    finally:
+        debug_log.clear_active("audio_sync")
+
+
+def _play_audio_sync_inner(audio_bytes: bytes) -> None:
     if IS_WINDOWS:
         try:
             _ensure_mixer_initialized()
@@ -360,8 +400,9 @@ def play_audio_sync(audio_bytes: bytes) -> None:
             channel = sound.play()
             while channel.get_busy():
                 pygame.time.wait(10)
+            _dbg("[Audio] play_audio_sync finished", flush=True)
         except Exception as exc:
-            print(f"[Audio] Pygame playback error: {exc}", flush=True)
+            _dbg(f"[Audio] Pygame playback error: {exc}", flush=True)
     else:
         try:
             if audio_bytes.startswith(b"RIFF"):
@@ -375,7 +416,7 @@ def play_audio_sync(audio_bytes: bytes) -> None:
                 except Exception:
                     estimated_duration = len(audio_bytes) / (48000 * 2)
                     timeout = max(10, int(estimated_duration + 5))
-                print(f"[Audio] Playing WAV audio with {timeout}s timeout", flush=True)
+                _dbg(f"[Audio] Playing WAV audio with {timeout}s timeout", flush=True)
                 proc = subprocess.Popen(
                     ["timeout", str(timeout), "aplay", "-"],
                     stdin=subprocess.PIPE,
@@ -384,14 +425,16 @@ def play_audio_sync(audio_bytes: bytes) -> None:
                 )
                 _, stderr = proc.communicate(input=audio_bytes)
                 if proc.returncode not in (0, 124):
-                    print(
+                    _dbg(
                         f"[Audio] aplay failed with return code {proc.returncode}: {stderr.decode()}",
                         flush=True,
                     )
+                else:
+                    _dbg("[Audio] play_audio_sync finished (WAV)", flush=True)
             else:
                 estimated_duration = len(audio_bytes) / (22050 * 2)
                 timeout = max(10, int(estimated_duration + 5))
-                print(
+                _dbg(
                     f"[Audio] Playing PCM audio ({estimated_duration:.1f}s) with {timeout}s timeout",
                     flush=True,
                 )
@@ -416,12 +459,12 @@ def play_audio_sync(audio_bytes: bytes) -> None:
                 )
                 _, stderr = proc.communicate(input=audio_bytes)
                 if proc.returncode not in (0, 124):
-                    print(
+                    _dbg(
                         f"[Audio] aplay failed with return code {proc.returncode}: {stderr.decode()}",
                         flush=True,
                     )
         except Exception as exc:
-            print(f"[Audio] aplay error: {exc}", flush=True)
+            _dbg(f"[Audio] aplay error: {exc}", flush=True)
 
 
 _audio_streamer = AudioStreamer()
@@ -476,7 +519,7 @@ def get_audio_duration(audio_file_path: str) -> float:
         _ensure_mixer_initialized()
         return pygame.mixer.Sound(audio_file_path).get_length()
     except Exception as exc:
-        print(f"[AudioStream] Error reading duration of '{audio_file_path}': {exc}", flush=True)
+        _dbg(f"[AudioStream] Error reading duration of '{audio_file_path}': {exc}", flush=True)
         return 0.0
 
 

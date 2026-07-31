@@ -108,19 +108,31 @@ def run(
     core.scheduler.push_app(launcher_host)
     launcher_host.start()
 
+    # Always-on overlay -- see apps/modifier_hud, the bottom-edge card that
+    # pops up while ALT/CTRL/CMD/FN is held. Every other overlay so far only
+    # ever starts on demand (e.g. sleep's restart_overlay_fn resuming
+    # whatever was already running before sleep); this one has no trigger
+    # app to start it from, so it's started here once, unconditionally.
+    app_control.start_overlay("modifier_hud")
+    app_control.start_overlay("sleep_hold_hud")
+
     last_input_time = time.monotonic()
 
-    # Shift resolution happens HERE, centrally, before any event reaches a
+    # Shift/FN resolution happens HERE, centrally, before any event reaches a
     # package or app — mirrors proxitalk.py's apply_shift_mapping() in its
     # main loop. Raw keycodes only identify the physical key (e.g. both '/'
     # and shift+'/' report KEY_SLASH; the shift modifier is a separate,
-    # simultaneous key event), so without tracking shift state here and
-    # remapping via shift_key_map (KEY_SLASH -> KEY_QUESTION, etc.), apps
-    # would never see the shifted variant no matter how key_map.py is set
-    # up on the receiving end.
+    # simultaneous key event), so without tracking shift/fn state here and
+    # remapping via shift_key_map/fn_key_map (KEY_SLASH -> KEY_QUESTION,
+    # etc.), apps would never see the shifted/fn variant no matter how
+    # key_map.py is set up on the receiving end. FN mirrors shift's
+    # two-physical-keys tracking (FN1/FN2, one at each end of the bottom
+    # row on the device, same idea as left/right shift).
     input_pkg = packages.get_package("input")
     _shift_keys = {"KEY_LEFTSHIFT", "KEY_RIGHTSHIFT"}
     _shift_held: set = set()
+    _fn_keys = {"KEY_FN1", "KEY_FN2"}
+    _fn_held: set = set()
 
     # On the Windows emulator, keyboard_manager.KeyboardManager installs a
     # GLOBAL OS-level hook (via the `keyboard` library) that captures every
@@ -140,7 +152,12 @@ def run(
 
                 last_input_time = time.monotonic()
                 if sleep_pkg is not None and sleep_pkg.is_sleeping():
-                    sleep_pkg.exit_sleep(restart_overlay_fn=app_control.start_overlay)
+                    # KEY_DOWN only -- otherwise the release of whatever key
+                    # just triggered sleep (e.g. letting go of HOME after a
+                    # hold-to-sleep) arrives as its own event right after
+                    # enter_sleep() and immediately wakes it back up.
+                    if ev.keystate == KEY_DOWN:
+                        sleep_pkg.exit_sleep(restart_overlay_fn=app_control.start_overlay)
                     continue
 
                 if ev.keycode in _shift_keys:
@@ -149,9 +166,15 @@ def run(
                     else:
                         _shift_held.discard(ev.keycode)
 
+                if ev.keycode in _fn_keys:
+                    if ev.keystate == KEY_DOWN:
+                        _fn_held.add(ev.keycode)
+                    else:
+                        _fn_held.discard(ev.keycode)
+
                 keycode = ev.keycode
                 if input_pkg is not None:
-                    keycode = input_pkg.apply_shift_mapping(keycode, bool(_shift_held))
+                    keycode = input_pkg.apply_modifier_mapping(keycode, bool(_shift_held), bool(_fn_held))
 
                 event_name = "onkeydown" if ev.keystate == KEY_DOWN else "onkeyup"
                 core.event_bus.dispatch_focused(event_name, keycode)
@@ -163,7 +186,8 @@ def run(
 
     try:
         is_paused = sleep_pkg.is_sleeping if sleep_pkg is not None else None
-        core.scheduler.run_forever(before_tick=_poll_and_dispatch, is_paused=is_paused)
+        should_stop = lambda: not core.display.is_running()
+        core.scheduler.run_forever(before_tick=_poll_and_dispatch, is_paused=is_paused, should_stop=should_stop)
     finally:
         packages.shutdown_all()
         core.shutdown()

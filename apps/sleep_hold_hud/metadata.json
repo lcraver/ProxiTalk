@@ -1,0 +1,9 @@
+{
+  "name": "Sleep Hold HUD",
+  "version": "1.0",
+  "description": "Overlay that puts the system to sleep when HOME is held for 5 seconds, showing a fill bar after 2 seconds.",
+  "author": "Pidge",
+  "type": "overlay",
+  "cursor_enabled": false,
+  "packages": ["display_gfx", "timer", "sleep"]
+}

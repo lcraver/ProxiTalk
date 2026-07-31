@@ -29,7 +29,6 @@ the same direction the user is navigating.
 from __future__ import annotations
 
 import os
-import time
 
 from core_os.apps_runtime.app_base import AppBase
 
@@ -50,6 +49,8 @@ class App(AppBase):
         self.app_control = context["app_control"]
         self.images = context["images"]
         self.animation = context["animation"]
+        self.synth_api = context["synth"]
+        self.timers = context["timer"]["timer_manager"]()
         self.screen_width = context["screen_width"]
         self.screen_height = context["screen_height"]
         self.menu = None
@@ -57,13 +58,39 @@ class App(AppBase):
         self._panel_bounds = None
         self._info_anim = None
         self._outgoing_anim = None
-        self._last_update_time = None
         self._last_selected_index = None
         self._first_info_slide = True
+        self._hover_synth = None
+        self._select_synth = None
 
     def start(self):
         print("[Launcher] Started")
+        # Short, percussive envelopes (no sustain) so hovering fast through
+        # the list doesn't blur into a drone -- each blip decays well before
+        # the next one can fire. Hover is a quiet high tick; select is a
+        # louder, lower confirm tone so the two read as distinct UI events.
+        self._hover_synth = self.synth_api["synth"](waveform="sine")
+        self._hover_synth.set_adsr(0.001, 0.02, 0.0, 0.03)
+        self._hover_synth.set_volume(0.35)
+        self._select_synth = self.synth_api["synth"](waveform="square")
+        self._select_synth.set_adsr(0.001, 0.03, 0.0, 0.05)
+        self._select_synth.set_volume(0.4)
+        # Noise, not a pitched waveform -- a rising-then-falling amplitude
+        # swell over the same envelope the panel slide runs at is what
+        # reads as "woosh" rather than a click.
+        self._woosh_synth = self.synth_api["synth"](waveform="noise")
+        self._woosh_synth.set_adsr(0.12, 0.1, 0.0, 0.05)
+        self._woosh_synth.set_volume(0.25)
         self._build_menu()
+
+    def _play_hover_sound(self):
+        self.synth_api["play_note"](self._hover_synth, "C6", 0.03)
+
+    def _play_select_sound(self):
+        self.synth_api["play_note"](self._select_synth, "E5", 0.06)
+
+    def _play_woosh_sound(self):
+        self.synth_api["play_note"](self._woosh_synth, "A4", _SLIDE_DURATION)
 
     def _entries(self):
         entries = [
@@ -210,6 +237,7 @@ class App(AppBase):
             # up/down-driven vertical slide behavior for menu movement.
             self._first_info_slide = False
             self._last_selected_index = self.menu.selected_index if self.menu else 0
+            self._play_woosh_sound()
             self._info_anim = self.animation["doslide"](
                 panel, from_x=self.screen_width, duration=_SLIDE_DURATION, easing="ease_out_back"
             )
@@ -226,6 +254,8 @@ class App(AppBase):
             # stack sliding past, not an unrelated cut.
             new_index = self.menu.selected_index if self.menu else 0
             moved_up = self._last_selected_index is not None and new_index < self._last_selected_index
+            if self._last_selected_index is not None and new_index != self._last_selected_index:
+                self._play_hover_sound()
             panel_height = self._panel_bounds[3]
             from_y = -panel_height if moved_up else self.screen_height
             exit_y = self.screen_height if moved_up else -panel_height
@@ -250,13 +280,12 @@ class App(AppBase):
             )
 
     def _on_select(self, item):
+        self._play_select_sound()
         self.storage["set"]("last_launched_app", item.value)
         self.app_control.swap_app_async("launcher", item.value, delay=0.1)
 
     def update(self):
-        now = time.monotonic()
-        dt = 0.0 if self._last_update_time is None else now - self._last_update_time
-        self._last_update_time = now
+        dt = self.timers.tick()
         if self._outgoing_anim is not None:
             self._outgoing_anim.update(dt)
             if self._outgoing_anim.done:
@@ -270,6 +299,9 @@ class App(AppBase):
 
     def onkeydown(self, keycode):
         if self.menu:
+            if keycode == "KEY_NO":
+                self._on_select(self.menu.selected_item)
+                return
             self.menu.handle_key(keycode)
 
     def stop(self):

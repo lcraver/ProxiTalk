@@ -178,13 +178,17 @@ class Scheduler:
         self,
         before_tick: Optional[Callable[[], None]] = None,
         is_paused: Optional[Callable[[], bool]] = None,
+        should_stop: Optional[Callable[[], bool]] = None,
     ) -> None:
         """Convenience loop: calls `before_tick()` (if given — typically input
         polling/dispatch, which paces the loop by blocking up to tick_interval)
-        then `tick()`, forever. `is_paused` (if given) is checked fresh every
+        then `tick()`, until `should_stop()` (if given) returns True -- checked
+        fresh every iteration, e.g. so closing the emulator window actually
+        ends the process instead of leaving this loop spinning in the
+        background forever. `is_paused` (if given) is checked fresh every
         iteration and forwarded to tick() -- see its docstring."""
         interval = 1.0 / self.tick_hz if self.tick_hz > 0 else 0.05
-        while True:
+        while should_stop is None or not should_stop():
             if before_tick is not None:
                 before_tick()
             else:

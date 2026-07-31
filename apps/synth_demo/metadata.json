@@ -1,0 +1,9 @@
+{
+  "name": "Synth Demo",
+  "version": "1.0",
+  "description": "Hold 1-5 to sustain each waveform; ENTER/6/7/8 play test songs, 9 plays a real MIDI file -- exercises the synth package's real-time note_on/note_off engine and the midi package's file parser, with a live oscilloscope/level-meter visualizer.",
+  "author": "Pidge",
+  "type": "app",
+  "cursor_enabled": false,
+  "packages": ["display_gfx", "synth", "timer", "midi", "files"]
+}

@@ -12,8 +12,6 @@ core_os app, instead of hand-rolling its own page framing and slide logic.
 
 from __future__ import annotations
 
-import time
-
 from core_os.apps_runtime.app_base import AppBase
 
 _TABS = ("visibility", "pinned", "language")
@@ -32,8 +30,8 @@ class App(AppBase):
         self.apps_registry = context["apps_registry"]
         self.language = context["language"]
         self.app_control = context["app_control"]
+        self.timers = context["timer"]["timer_manager"]()
         self.tabs = None
-        self._last_update_time = None
 
     def start(self):
         print("[App Settings] Started")
@@ -114,9 +112,7 @@ class App(AppBase):
 
     def update(self):
         if self.tabs:
-            now = time.monotonic()
-            dt = 0.0 if self._last_update_time is None else now - self._last_update_time
-            self._last_update_time = now
+            dt = self.timers.tick()
             self.tabs.tick(dt)
 
     def onkeydown(self, keycode):

@@ -9,10 +9,27 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, Optional
 
 import core_os.packages.audio.engine as _am
+from core_os.core import debug_log
 from core_os.packages.tts.engine_manager import TTSEngineManager
 from core_os.packages.tts.engines.base import EngineResources
 
 from core_os.packages.base import Package, PackageResources
+
+
+def _log_audio_sources_snapshot() -> None:
+    """Dump every audio system's current state to the console so a queued
+    TTS line's trace also shows what it's competing with (stream/music/mixer
+    all share the one pygame mixer, so overlap here is exactly what causes
+    garbled/cut-off playback). Console-only -- the on-screen speaker overlay
+    shows live active status instead, via debug_log.set_active/clear_active."""
+    stream_info = _am.get_audio_stream_info()
+    print(
+        "[Audio] Sources -- "
+        f"stream: playing={stream_info['is_playing']} paused={stream_info['is_paused']} file={stream_info['file']} | "
+        f"music: playing={_am.is_music_playing()} | "
+        f"mixer_busy={bool(_am.pygame.mixer.get_busy()) if _am.pygame.mixer.get_init() else 'uninitialized'}",
+        flush=True,
+    )
 
 
 class _EnginePrefsAdapter:
@@ -69,21 +86,35 @@ class TTSPackage(Package):
         on_error: Optional[Callable[[Exception], None]] = None,
         play: bool = True,
     ) -> None:
+        engine_id = self._manager.get_current_engine()
+        preview = text if len(text) <= 60 else text[:57] + "..."
+        print(f"[TTS] Queued line on '{engine_id}': \"{preview}\"", flush=True)
+        _log_audio_sources_snapshot()
+
         def _work() -> bytes:
-            audio_bytes = self._manager.synthesize(text)
-            if play and audio_bytes:
-                # Engines don't agree on format: Piper returns raw headerless
-                # PCM at a fixed 22050Hz, but openjtalk/voicevox return full
-                # WAV files with their OWN embedded sample rate (openjtalk
-                # ~48000Hz, voicevox 24000Hz). engine.play_audio_sync
-                # already auto-detects RIFF-header WAV vs raw PCM (same logic
-                # V1's TTS pipeline relies on) and plays each correctly --
-                # going through core.audio_output.play_pcm() with a hardcoded
-                # 22050Hz here previously forced every engine's output through
-                # Piper's format, which for a real WAV file both misread its
-                # header bytes as audio and played genuinely-48000Hz audio
-                # tagged as 22050Hz (audibly slow + pitched down).
-                _am.play_audio_sync(audio_bytes)
+            debug_log.set_active("tts", f"[TTS] synthesizing ({engine_id}): \"{preview}\"")
+            print(f"[TTS] Synthesizing on '{engine_id}': \"{preview}\"", flush=True)
+            try:
+                audio_bytes = self._manager.synthesize(text)
+                print(f"[TTS] Synthesized {len(audio_bytes)} bytes", flush=True)
+                if play and audio_bytes:
+                    # Engines don't agree on format: Piper returns raw headerless
+                    # PCM at a fixed 22050Hz, but openjtalk/voicevox return full
+                    # WAV files with their OWN embedded sample rate (openjtalk
+                    # ~48000Hz, voicevox 24000Hz). engine.play_audio_sync
+                    # already auto-detects RIFF-header WAV vs raw PCM (same logic
+                    # V1's TTS pipeline relies on) and plays each correctly --
+                    # going through core.audio_output.play_pcm() with a hardcoded
+                    # 22050Hz here previously forced every engine's output through
+                    # Piper's format, which for a real WAV file both misread its
+                    # header bytes as audio and played genuinely-48000Hz audio
+                    # tagged as 22050Hz (audibly slow + pitched down).
+                    debug_log.set_active("tts", f"[TTS] speaking ({engine_id}): \"{preview}\"")
+                    print(f"[TTS] Playing line on '{engine_id}'", flush=True)
+                    _am.play_audio_sync(audio_bytes)
+                    print(f"[TTS] Finished playing line on '{engine_id}'", flush=True)
+            finally:
+                debug_log.clear_active("tts")
             return audio_bytes
 
         self.resources.core.scheduler.run_background(_work, on_done=on_done, on_error=on_error)

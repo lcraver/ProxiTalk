@@ -111,6 +111,14 @@ WIN_TO_LINUX_KEYCODE = {
     'right alt': 'KEY_RIGHTALT',
     'alt': 'KEY_LEFTALT',
 
+    # No FN key on a normal keyboard -- the device has two (FN1/FN2, one at
+    # each end of the bottom row), stand-ins bound to the two Windows keys
+    # so the fn symbol layer (core_os/packages/input/keymap.py's
+    # fn_key_map) is reachable in the emulator too.
+    'left windows': 'KEY_FN1',
+    'right windows': 'KEY_FN2',
+    'windows': 'KEY_FN1',
+
     # arrow keys
     'up': 'KEY_UP',
     'down': 'KEY_DOWN',

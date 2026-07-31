@@ -41,6 +41,13 @@ class DisplayDriver(ABC):
     def stop(self) -> None:
         """Release any resources (threads, device handles) held by this driver."""
 
+    def is_running(self) -> bool:
+        """False once the display has been closed from the outside (e.g. the
+        emulator window's close button/File > Quit) and the whole process
+        should shut down. Real hardware has no such concept, so the default
+        is always-True -- only backends with a closable window override it."""
+        return True
+
 
 @dataclass
 class InputEvent:
@@ -79,6 +86,27 @@ class InputDriver(ABC):
         return True
 
 
+class PCMStream(ABC):
+    """A long-lived raw-PCM output stream, for continuous/real-time audio
+    (see packages/synth/player.py's SynthEngine) — distinct from play_pcm()
+    below, which commits to ONE finite buffer per call and blocks the
+    calling thread for its entire duration. write() should be treated as
+    "emit this chunk" only: callers are responsible for their OWN pacing
+    (see SynthEngine's self-timed mixer loop) rather than relying on
+    write() to block/backpressure them, since whether it blocks at all
+    differs by backend (e.g. a Pi's aplay stdin pipe vs. Windows' pygame
+    mixer channel) and leaning on that difference would give the two
+    backends different failure modes instead of actual parity."""
+
+    @abstractmethod
+    def write(self, pcm_bytes: bytes) -> None:
+        ...
+
+    @abstractmethod
+    def close(self) -> None:
+        ...
+
+
 class AudioOutputDriver(ABC):
     """Plays back audio. Does not know about sfx/music/streaming semantics —
     that's the `audio` Package's job."""
@@ -94,6 +122,11 @@ class AudioOutputDriver(ABC):
     @abstractmethod
     def stop(self) -> None:
         ...
+
+    @abstractmethod
+    def open_pcm_stream(self, sample_rate: int) -> PCMStream:
+        """Opens a new long-lived PCMStream for continuous playback. Caller
+        owns the returned stream's lifetime (must call .close() when done)."""
 
     def set_volume(self, volume: float) -> None:
         """Optional: 0.0-1.0. Default no-op."""

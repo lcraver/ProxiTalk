@@ -5,5 +5,5 @@
   "author": "Pidge",
   "type": "app",
   "cursor_enabled": false,
-  "packages": ["display_gfx", "ui", "storage", "apps_registry", "language", "animation"]
+  "packages": ["display_gfx", "ui", "storage", "apps_registry", "language", "animation", "timer"]
 }

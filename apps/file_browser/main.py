@@ -24,7 +24,6 @@ itself enforces, matching any other on-device file manager."""
 from __future__ import annotations
 
 import os
-import time
 
 from core_os.apps_runtime.app_base import AppBase
 
@@ -132,6 +131,7 @@ class App(AppBase):
         self.input = context["input"]
         self.audio = context["audio"]
         self.app_control = context["app_control"]
+        self.timers = context["timer"]["timer_manager"]()
         self.screen_width = context["screen_width"]
 
         self.current_dir = self.files["root_dir"]()
@@ -149,7 +149,6 @@ class App(AppBase):
         self._audio_status_label = None
         self._audio_progress_bar = None
         self._audio_status_elapsed = 0.0
-        self._last_update_time = None
         # Loaded once (display-ready '1'-mode PIL images, see images.load_file)
         # and reused as every matching MenuItem's icon -- a scrolling list can
         # have dozens of rows sharing the same 5 category icons, so decoding
@@ -517,9 +516,7 @@ class App(AppBase):
     # --- app lifecycle ---------------------------------------------------
 
     def update(self):
-        now = time.monotonic()
-        dt = 0.0 if self._last_update_time is None else now - self._last_update_time
-        self._last_update_time = now
+        dt = self.timers.tick()
         if self.mode == _MODE_LIST and self.menu is not None:
             self.menu.tick(dt)
         elif self.mode == _MODE_PREVIEW and self.image_widget is not None:
